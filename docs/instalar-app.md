@@ -32,6 +32,10 @@ Na página **[github.com/d1g4odev/caca-cliente/releases/latest](https://github.c
 3. O instalador (NSIS) abre. Clique em **Avançar** → **Avançar** → **Instalar** → **Concluir**.
 4. O app aparece no **Menu Iniciar** e na **Área de Trabalho**. Pronto, é só abrir.
 
+> 🚫 **Você NÃO precisa "abrir como administrador".** O instalador é por usuário e não pede permissão de admin — se parece que precisa, o problema real é outro (SmartScreen no passo 2, ou antivírus no item abaixo). Rodar como administrador não resolve e pode confundir mais.
+>
+> 🛡️ **Se o duplo clique não abrir nada** (sem tela azul, sem erro, simplesmente não acontece nada): o antivírus/Windows Defender pode ter colocado o `.exe` em quarentena silenciosamente ao baixar. Abra o **Windows Security** → **Proteção contra vírus e ameaças** → **Histórico de proteção**, procure o arquivo do Caça-Cliente e clique em **Permitir**. Depois tente abrir de novo.
+
 ---
 
 ## 🟦 Mac — instalar
@@ -96,6 +100,7 @@ Quando sair uma versão nova, o app mostra um **aviso no topo da tela** (um bann
 | Problema | O que fazer |
 |---|---|
 | Windows: "O acesso a este arquivo foi bloqueado" | Clique com botão direito no `.exe` → **Propriedades** → **Desbloquear** → **OK**. Depois abra de novo. |
+| Windows: parece que só abre "como administrador" | Na verdade não precisa de admin — o instalador é por usuário. O que resolve de verdade é **Mais informações → Executar assim mesmo** na tela do SmartScreen (veja acima), ou liberar no Windows Defender se o antivírus colocou o arquivo em quarentena. |
 | Windows: sumiu o ícone da Área de Trabalho | Procure "Caça-Cliente" no Menu Iniciar. |
 | Mac: "não pode ser aberto" mesmo com botão direito | Execute `xattr -cr /Applications/Caça-Cliente.app` no Terminal e tente de novo. |
 | Mac: "arquivo danificado" ao abrir o `.dmg` | Baixe de novo — talvez o download corrompeu. |

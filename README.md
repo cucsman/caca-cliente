@@ -147,10 +147,10 @@ Na barra à esquerda, em **Exportar**, baixe a planilha em **CSV** ou **Excel** 
 ### Instalação (app desktop)
 
 **O Windows bloqueou o instalador (SmartScreen).**
-- É normal em app novo sem certificado pago. Clique em **"Mais informações"** → **"Executar assim mesmo"**. Veja o guia completo em [docs/instalar-app.md](./docs/instalar-app.md).
+- É normal em app novo sem certificado pago. Clique em **"Mais informações"** → **"Executar assim mesmo"**. Veja o guia completo em [docs/instalar-app.md](./docs/instalar-app.md). Você **não precisa** abrir nada como administrador — isso não é a causa nem resolve.
 
-**O Mac diz que o app não pode ser aberto.**
-- Clique com **botão direito** no app → **Abrir**. Na janela que aparece, clique em **Abrir** de novo. Precisa fazer isso só na primeira vez.
+**O Mac diz que o app "está danificado" ou "não pode ser aberto".**
+- Clique com **botão direito** no app → **Abrir**. Na janela que aparece, clique em **Abrir** de novo. Precisa fazer isso só na primeira vez. Se mesmo assim continuar dizendo que está danificado, rode `xattr -cr /Applications/Caça-Cliente.app` no Terminal. Veja o guia completo em [docs/instalar-app.md](./docs/instalar-app.md).
 
 **O app não abre / tela fica em branco.**
 - Feche e abra de novo. Se persistir, baixe a versão mais nova em [releases/latest](https://github.com/d1g4odev/caca-cliente/releases/latest).
