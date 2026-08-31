@@ -37,6 +37,7 @@ export default function App() {
   const [filters, setFilters] = useState({ phone: false, instagram: false, email: false, showWithSite: false, showFollowUp: false });
   const toggleFilter = (k) => setFilters((f) => ({ ...f, [k]: !f[k] }));
   const [searchError, setSearchError] = useState(null); // erro inline (substitui alert)
+  const [patchError, setPatchError] = useState(null); // PATCH falhou no back (ex: DB fora do ar) — a mudança otimista não foi salva
   const [dbWarning, setDbWarning] = useState(null); // aviso de persistência desativada (ver /api/status)
   const [dbWarningDismissed, setDbWarningDismissed] = useState(false);
   const { theme, toggle: toggleTheme } = useTheme();
@@ -176,7 +177,14 @@ export default function App() {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(patch),
-        }).catch(() => {});
+        })
+          .then((r) => r.json().catch(() => ({})).then((body) => {
+            // fetch só rejeita em falha de rede — 4xx/5xx (ex: DB fora do ar,
+            // busca expirada da memória) chegam aqui como "sucesso" e ficavam
+            // mudos: o card mostrava a mudança otimista, mas nada era salvo.
+            if (!r.ok || body?.ok === false) throw new Error();
+          }))
+          .catch(() => setPatchError('Não consegui salvar essa alteração agora. Ela pode se perder ao recarregar a página.'));
       }
     },
     [search]
@@ -277,6 +285,12 @@ export default function App() {
             <div className="search-error" role="alert">
               <strong>Não consegui buscar agora.</strong> {searchError}
               <button type="button" onClick={() => setSearchError(null)} aria-label="fechar">✕</button>
+            </div>
+          )}
+          {patchError && (
+            <div className="search-error" role="alert">
+              <strong>⚠️ {patchError}</strong>
+              <button type="button" onClick={() => setPatchError(null)} aria-label="fechar">✕</button>
             </div>
           )}
           <div className="view-toggle">
