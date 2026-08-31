@@ -27,7 +27,13 @@ function leadFromSession(l, searchCity, searchNiche) {
     nome: l.name ?? '',
     nicho: l.niche ?? searchNiche ?? '',
     cidade: searchCity ?? '',
-    temSite: l.hasWebsite ?? Boolean(e.discoveredWebsite),
+    // `||`, não `??`: todo lead desta pipeline vem de buscarEstabelecimentos()
+    // já filtrado por `!hasWebsite`, ou seja hasWebsite é SEMPRE `false`
+    // (nunca null/undefined) — `??` nunca cairia no fallback e o
+    // discoveredWebsite achado pelo enrichWorker (DDG/Bing) seria ignorado,
+    // fazendo o prospector afirmar "procurei seu site e não encontrei" pra
+    // um lead que na verdade TEM site.
+    temSite: l.hasWebsite || Boolean(e.discoveredWebsite),
     temInstagram: Boolean(e.instagram),
     linkQuebrado: l.linkQuebrado ?? false,
     estagio: l.stage ?? 'novo',
@@ -186,7 +192,8 @@ router.post('/api/search/:searchId/messages/batch', async (req, res) => {
       nome: l.name ?? '',
       nicho: l.niche ?? data.niche ?? '',
       cidade: data.city ?? '',
-      temSite: l.hasWebsite ?? Boolean(e.discoveredWebsite),
+      // Ver nota equivalente em leadFromSession() acima.
+      temSite: l.hasWebsite || Boolean(e.discoveredWebsite),
       temInstagram: Boolean(e.instagram),
       linkQuebrado: l.linkQuebrado ?? false,
       estagio: l.stage ?? 'novo',
