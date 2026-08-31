@@ -1,25 +1,27 @@
 import { useMemo, useState } from 'react';
 import { waLink } from '../lib/whatsapp.js';
 import { waLinkWithMessage } from '../lib/whatsapp.js';
-import { useDispatchMessages } from '../hooks/useDispatchMessages.js';
+import { useLeadMessages } from '../hooks/useLeadMessages.js';
 
 // "Modo disparo" — abordagem em sequência, com humano no loop (respeita as
 // regras do WhatsApp). Abre cada lead com a mensagem pronta; ao confirmar, o
 // lead vai para "Contatado" e avança automaticamente para o próximo.
 //
-// As mensagens vêm do motor (server/src/prospector/) via endpoint de lote ou
-// individual — NÃO usa mais o template legado de whatsapp.js como fonte
-// primária. O template legado só aparece como fallback discreto se a API falhar.
+// As mensagens vêm do motor (server/src/prospector/) via useLeadMessages
+// (mesmo hook usado pelos botões rápidos de WhatsApp no resto do app, aqui
+// com tipo:'abordagem' fixo) — NÃO usa mais o template legado de whatsapp.js
+// como fonte primária. O template legado só aparece como fallback discreto
+// se a API falhar.
 export default function DispatchMode({ leads, searchId, onContacted, onClose }) {
   // Memoizado: a fila é recalculada apenas quando `leads` muda de verdade, não a
   // cada re-render (ex: ao avançar `i`) — senão o efeito de geração de mensagens
-  // em useDispatchMessages reinicia e reconsulta o motor a cada "próximo".
+  // em useLeadMessages reinicia e reconsulta o motor a cada "próximo".
   const fila = useMemo(
     () => leads.filter((l) => !l.waInvalid && waLink(l.phone, l.name, l.niche)), // só quem tem WhatsApp válido
     [leads]
   );
   const [i, setI] = useState(0);
-  const { loading, usedFallback, getMensagem } = useDispatchMessages({ searchId, leads: fila });
+  const { loading, usedFallback, getMensagem } = useLeadMessages({ searchId, leads: fila, tipo: 'abordagem' });
 
   const done = i >= fila.length;
   const lead = fila[i];
