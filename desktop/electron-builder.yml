@@ -40,7 +40,14 @@ win:
 nsis:
   # Instalador clássico "avançar-avançar-concluir" — o que o aluno conhece.
   oneClick: false
-  allowToChangeInstallationDirectory: true
+  # false (não é o default — o default do electron-builder é true): com
+  # perMachine:false, deixar o aluno trocar a pasta é um risco real, não só
+  # estético. Se ele navegar até algo tipo "C:\Program Files\Caca-Cliente"
+  # (caminho que ele já viu em outros programas), o instalador tenta escrever
+  # lá SEM elevação — falha com erro de acesso negado, o aluno interpreta como
+  # "preciso ser administrador" e é exatamente o sintoma relatado. Fixar o
+  # destino em %LOCALAPPDATA%\Programs remove essa escolha inteira do fluxo.
+  allowToChangeInstallationDirectory: false
   # Explícito (é o default do electron-builder, mas não confiar em default
   # silencioso): instala em %LOCALAPPDATA%\Programs, por usuário, SEM pedir
   # elevação UAC. O aluno não precisa (e não deve) usar "abrir como
