@@ -139,7 +139,10 @@ export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDis
                       {l.enrichment?.instagram && <span title="Instagram">📷</span>}
                       {l.enrichment?.facebook && <span title="Facebook">📘</span>}
                       {l.enrichment?.linkedin && <span title="LinkedIn">🔗</span>}
-                      {l.enrichmentStatus === 'not_found' && (
+                      {l.enrichmentStatus === 'not_found' && l.enrichment?.partial && (
+                        <span className="muted" style={{ fontSize: 11 }} title="Busca falhou ou foi bloqueada — pode valer tentar de novo mais tarde">⚠️ busca falhou</span>
+                      )}
+                      {l.enrichmentStatus === 'not_found' && !l.enrichment?.partial && (
                         <span className="muted" style={{ fontSize: 11 }}>sem contato</span>
                       )}
                     </div>

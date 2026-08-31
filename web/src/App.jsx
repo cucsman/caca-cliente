@@ -116,7 +116,16 @@ export default function App() {
     useCallback((evt) => {
       setLeads((prev) =>
         prev.map((l) =>
-          l.id === evt.leadId ? { ...l, enrichmentStatus: evt.status, enrichment: evt.enrichment } : l
+          l.id === evt.leadId
+            ? {
+                ...l,
+                enrichmentStatus: evt.status,
+                enrichment: evt.enrichment,
+                // Fallback de endereço (Nominatim) chega best-effort, bem depois do
+                // resto — só reaplica quando o evento realmente traz um endereço novo.
+                ...(evt.addressSource === 'nominatim' ? { address: evt.address, addressSource: evt.addressSource } : {}),
+              }
+            : l
         )
       );
     }, [])

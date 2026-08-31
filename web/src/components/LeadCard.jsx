@@ -70,7 +70,12 @@ export default function LeadCard({ lead, selected, onSelect, onOpenDetails }) {
 
       <footer className="contacts">
         {lead.enrichmentStatus === 'pending' && <span className="chip chip--pending">🔎 buscando contatos…</span>}
-        {lead.enrichmentStatus === 'not_found' && <span className="chip">nenhum contato encontrado</span>}
+        {lead.enrichmentStatus === 'not_found' && e?.partial && (
+          <span className="chip chip--pending" title="A busca de contatos falhou ou foi bloqueada — pode valer tentar de novo mais tarde">
+            ⚠️ busca falhou, sem confirmação
+          </span>
+        )}
+        {lead.enrichmentStatus === 'not_found' && !e?.partial && <span className="chip">nenhum contato encontrado</span>}
         {lead.enrichmentStatus === 'done' && e && (
           <>
             {e.email && (
