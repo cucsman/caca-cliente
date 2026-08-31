@@ -43,6 +43,10 @@ export function normalizeWhatsApp(input) {
   const ddd = Number(n.slice(2, 4));
   if (ddd < 11 || ddd > 99) return null;
 
+  // Celular (13 dígitos) tem que ter o 9º dígito de fato — sem ele o "local"
+  // de 9 dígitos não é um número real (só existe DDD+8 fixo ou DDD+9xxxxxxxx celular).
+  if (n.length === 13 && n[4] !== '9') return null;
+
   return n;
 }
 
