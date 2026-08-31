@@ -15,7 +15,7 @@ export const ANGULOS = {
   OBJECAO_AGORA_NAO: 'objecao_agora_nao',
   OBJECAO_VO_PENSAR: 'objecao_vo_pensar',
   OBJECAO_MANDA_INSTAGRAM: 'objecao_manda_instagram',
-  OBJECAO_SECRETARIA_ANALISA: 'objecao_secretaria_analiza',
+  OBJECAO_SECRETARIA_ANALISA: 'objecao_secretaria_analisa',
   PRECO_PADRAO: 'preco_padrao',
   PRECO_CURTO: 'preco_curto',
   PORTFOLIO: 'portfolio',
