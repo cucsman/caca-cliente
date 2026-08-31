@@ -203,7 +203,7 @@ export async function statsConversao() {
 
 // Histórico de buscas (com contagem de leads e enriquecidos).
 // Busca leads duplicados entre buscas — mesmo telefone normalizado (só dígitos)
-// OU mesmo nome + coordenada (~50m). Só roda com Postgres ativo.
+// OU mesmo nome + coordenada (~50m). Implementado também em sqlite.js.
 // Retorna Map<lead_id, {stage}> dos leads ANTERIORES que casam.
 export async function findDupLeads(searchId, leads) {
   if (!pool || !leads.length) return new Map();
