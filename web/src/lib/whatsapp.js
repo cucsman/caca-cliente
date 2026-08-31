@@ -162,14 +162,32 @@ function cidadeLembrada() {
   try { return localStorage.getItem(CITY_KEY) || ''; } catch { return ''; }
 }
 
+// Frases de fábrica que afirmam "procurei o site e não encontrei" — aparecem
+// nos modelos 'avaliacoes-google' e 'pesquisa-local' de MODELOS_ABORDAGEM.
+// Quando hasSite=true (o enriquecimento achou um discoveredWebsite depois da
+// FASE 1 do OSM), essas frases viram afirmação falsa pro lead — mesmo bug que
+// o Garimpo corrigiu em server/src/prospector/templates.js (semPresencaDigital).
+// Como o template aqui é texto livre editável (não montado por código), a
+// forma de corrigir é remover as frases conhecidas quando hasSite=true, em vez
+// de reescrever o template inteiro.
+const FRASES_SEM_SITE = [
+  ' Procurei o site de vocês e não encontrei.',
+  ' Procurei um site pra conhecer melhor e não encontrei.',
+];
+
 // Monta a mensagem final aplicando a config (personalizada ou padrão).
-export function montarMensagem(nome, niche, cfg = loadMsgConfig()) {
-  const msg = (cfg.template || DEFAULT_TEMPLATE)
+// hasSite: true quando o lead já tem um site conhecido (discoveredWebsite) —
+// remove a afirmação de "não encontrei o site" dos modelos de fábrica.
+export function montarMensagem(nome, niche, cfg = loadMsgConfig(), hasSite = false) {
+  let msg = (cfg.template || DEFAULT_TEMPLATE)
     .replaceAll('{saudacao}', saudacao(nome))
     .replaceAll('{nome}', nome ?? '')
     .replaceAll('{beneficio}', beneficio(niche, cfg))
     .replaceAll('{nicho}', (niche || '').trim() || 'o serviço de vocês')
     .replaceAll('{cidade}', cidadeLembrada() || 'sua cidade');
+  if (hasSite) {
+    for (const frase of FRASES_SEM_SITE) msg = msg.replace(frase, '');
+  }
   return aplicarPerfil(msg, cfg);
 }
 
@@ -197,10 +215,10 @@ export function normalizePhoneBR(phone) {
   return n;
 }
 
-export function waLink(phone, nome, niche) {
+export function waLink(phone, nome, niche, hasSite = false) {
   const d = normalizePhoneBR(phone);
   if (!d) return null;
-  return `https://wa.me/${d}?text=${encodeURIComponent(montarMensagem(nome, niche))}`;
+  return `https://wa.me/${d}?text=${encodeURIComponent(montarMensagem(nome, niche, undefined, hasSite))}`;
 }
 
 // Monta link wa.me com mensagem personalizada (ex: mensagem gerada pela IA).
