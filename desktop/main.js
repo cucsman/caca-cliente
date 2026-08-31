@@ -83,11 +83,18 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let win = null;
+  // Se o segundo clique chegar durante a inicialização (servidor/janela ainda
+  // subindo), 'win' está null e o foco seria perdido — o aluno vê o clique
+  // "não fazer nada" e clica de novo achando que precisa insistir. Guarda o
+  // pedido e aplica assim que a janela existir.
+  let focoPendente = false;
 
   app.on('second-instance', () => {
     if (win) {
       if (win.isMinimized()) win.restore();
       win.focus();
+    } else {
+      focoPendente = true;
     }
   });
 
@@ -130,6 +137,10 @@ if (!app.requestSingleInstanceLock()) {
         return { action: 'deny' };
       });
       win.on('closed', () => { win = null; });
+      if (focoPendente) {
+        win.once('ready-to-show', () => win?.focus());
+        focoPendente = false;
+      }
       await win.loadURL(`http://127.0.0.1:${port}`);
     } catch (e) {
       dialog.showErrorBox(

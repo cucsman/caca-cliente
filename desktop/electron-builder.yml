@@ -41,6 +41,12 @@ nsis:
   # Instalador clássico "avançar-avançar-concluir" — o que o aluno conhece.
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Explícito (é o default do electron-builder, mas não confiar em default
+  # silencioso): instala em %LOCALAPPDATA%\Programs, por usuário, SEM pedir
+  # elevação UAC. O aluno não precisa (e não deve) usar "abrir como
+  # administrador" — se o instalador pede elevação, é outra coisa (SmartScreen
+  # ou antivírus), não falta de admin de verdade.
+  perMachine: false
 
 mac:
   target:
