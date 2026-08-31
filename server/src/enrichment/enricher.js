@@ -42,7 +42,7 @@ export function createSearch(leads, meta = {}) {
     pump(session);
   }
 
-  // Dedup entre buscas: anota seenBefore/alreadyContacted (só com Postgres)
+  // Dedup entre buscas: anota seenBefore/alreadyContacted (postgres ou sqlite — qualquer driver com persistência real)
   if (db.dbEnabled) {
     db.findDupLeads(id, [...session.leads.values()]).then((dupMap) => {
       for (const [leadId, dup] of dupMap) {
