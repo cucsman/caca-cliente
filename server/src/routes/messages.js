@@ -169,11 +169,13 @@ router.post('/api/search/:searchId/messages/batch', async (req, res) => {
   }
 
   if (leads.length === 0) {
+    // Mesmo sem leads pra processar, leadIds pedidos e não encontrados têm que
+    // aparecer em falhas — senão um lote com IDs errados parece "sucesso vazio".
     return res.json({
       searchId,
       tipo: tipo || 'inferido',
       geracoes: [],
-      falhas: [],
+      falhas: notFound.map((id) => ({ leadId: id, erro: 'Lead não encontrado nesta busca.' })),
     });
   }
 
