@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { waLink } from '../lib/whatsapp.js';
 import { waLinkWithMessage } from '../lib/whatsapp.js';
 import { useDispatchMessages } from '../hooks/useDispatchMessages.js';
@@ -11,7 +11,13 @@ import { useDispatchMessages } from '../hooks/useDispatchMessages.js';
 // individual — NÃO usa mais o template legado de whatsapp.js como fonte
 // primária. O template legado só aparece como fallback discreto se a API falhar.
 export default function DispatchMode({ leads, searchId, onContacted, onClose }) {
-  const fila = leads.filter((l) => !l.waInvalid && waLink(l.phone, l.name, l.niche)); // só quem tem WhatsApp válido
+  // Memoizado: a fila é recalculada apenas quando `leads` muda de verdade, não a
+  // cada re-render (ex: ao avançar `i`) — senão o efeito de geração de mensagens
+  // em useDispatchMessages reinicia e reconsulta o motor a cada "próximo".
+  const fila = useMemo(
+    () => leads.filter((l) => !l.waInvalid && waLink(l.phone, l.name, l.niche)), // só quem tem WhatsApp válido
+    [leads]
+  );
   const [i, setI] = useState(0);
   const { loading, usedFallback, getMensagem } = useDispatchMessages({ searchId, leads: fila });
 
