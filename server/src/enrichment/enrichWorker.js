@@ -292,6 +292,24 @@ function tokensCidade(cidade) {
     .filter((t) => t && t.length >= MIN_TOKEN_LEN_CIDADE);
 }
 
+// QA (Faro) re-testou em produção (Curitiba, 31 leads) depois do fix acima e
+// achou uma regressão nova: ~29% dos leads (9/31) têm nome formado só por
+// palavras curtas/categoria que a blacklist remove (ex.: "Rei dos
+// Cosméticos", "Ari Barbearia", "City's Cabeleireiros", "Salão J.R.") —
+// tokensSignificativos fica vazio e o lead cai em not_found SEMPRE, mesmo
+// quando o Bing tem o resultado certo. Isso troca falso-positivo por
+// inelegibilidade permanente, o que também não serve.
+//
+// Fallback: quando não sobra token específico, usa o NOME INTEIRO (sem
+// filtrar categoria/tamanho) como âncora. Uma frase de várias palavras
+// batendo por completo é específica o bastante sozinha — é bem improvável um
+// resultado errado repetir "rei dos cosmeticos" inteiro por coincidência,
+// mesmo que cada palavra isolada seja genérica.
+function nomeCompletoFallback(leadName) {
+  const frase = normalizarNome(leadName).replace(/\s+/g, ' ').trim();
+  return { frase, concatenado: frase.replace(/\s+/g, '') };
+}
+
 // Pra URL/domínio (site oficial, rede social): a IDENTIDADE é a própria URL,
 // então o nome do lead precisa aparecer NELA — não basta o texto ao redor
 // mencionar o lead de passagem. Sem essa exigência, uma galeria/diretório que
@@ -299,21 +317,36 @@ function tokensCidade(cidade) {
 // Paulo" que lista várias padarias, entre elas a do lead) passava como se
 // fosse o site oficial, só porque o nome aparecia no texto da matéria.
 //
-// 2+ tokens do nome batendo na própria URL é coincidência improvável o
-// bastante pra aceitar sem checar cidade (ex.: "padariabellapaulista.com.br"
-// pra "Padaria Bella Paulista" — o trecho de busca nem precisa repetir "são
-// paulo"). Com só 1 token batendo na URL, exige cidade corroborando no texto
-// ao redor — sinal fraco demais sozinho (foi assim que "emporium"/"citys"
-// colaram em negócios de OUTRA cidade nos 4 falso-positivo do Faro). Sem
-// NENHUM token na URL, rejeita sempre — o nome só aparecer no texto ao redor
-// não faz daquela URL o recurso do lead.
-function relevanteUrl(alvo, ctx, nomeTokens, cidadeTokens) {
-  if (!nomeTokens.length) return false;
+// 2+ tokens ESPECÍFICOS do nome batendo na própria URL é coincidência
+// improvável o bastante pra aceitar sem checar cidade (palavras específicas
+// de verdade, tipo "bella"+"paulista", não se repetem por acaso). Com só 1
+// token específico, exige cidade corroborando no texto ao redor — sinal
+// fraco demais sozinho (foi assim que "emporium"/"citys" colaram em negócios
+// de OUTRA cidade nos 4 falso-positivo do Faro).
+//
+// Sem token específico nenhum (nome só de categoria+conector — ver
+// nomeCompletoFallback), tenta o nome INTEIRO — mas aqui SEMPRE exige cidade,
+// mesmo batendo na própria URL: um nome genérico de várias palavras ainda
+// pode ser reaproveitado por outra unidade/filial/homônimo em cidade
+// diferente, só com um sufixo mudando no handle (achado testando "Rei dos
+// Cosméticos": o handle "reidoscosmeticossp" bate o nome inteiro por
+// completo mas é doutra cidade — sem checar cidade aqui, colaria de novo).
+function relevanteUrl(alvo, ctx, nomeTokens, nomeCompleto, cidadeTokens) {
   const alvoNorm = normalizarNome(alvo).replace(/\s+/g, '');
+  const ctxNorm = ctx || '';
+
   const tokensNaUrl = nomeTokens.filter((t) => alvoNorm.includes(t));
   if (tokensNaUrl.length >= 2) return true;
-  if (tokensNaUrl.length === 0 || !cidadeTokens.length) return false;
-  return cidadeTokens.some((t) => (ctx || '').includes(t));
+  if (tokensNaUrl.length === 1) {
+    return cidadeTokens.length > 0 && cidadeTokens.some((t) => ctxNorm.includes(t));
+  }
+
+  // Nenhum token específico bateu (ou não sobrou nenhum pra checar) — última
+  // tentativa com o nome inteiro, sempre exigindo cidade.
+  const bateNomeCompleto = (nomeCompleto.concatenado.length >= 6 && alvoNorm.includes(nomeCompleto.concatenado))
+    || (nomeCompleto.frase && ctxNorm.includes(nomeCompleto.frase));
+  if (!bateNomeCompleto || !cidadeTokens.length) return false;
+  return cidadeTokens.some((t) => ctxNorm.includes(t));
 }
 
 // Pra e-mail de provedor genérico (gmail, hotmail etc.): o ENDEREÇO em si não
@@ -322,14 +355,17 @@ function relevanteUrl(alvo, ctx, nomeTokens, cidadeTokens) {
 // DESSE lead só pode vir do texto ao redor mencionar nome E cidade dele —
 // sem isso, um e-mail de outro anúncio na mesma página de resultados (achado
 // real de QA: "reiimobiliaria@gmail.com", de uma imobiliária, atribuído ao
-// lead "Rei dos Cosméticos") cola no lead errado.
-function relevanteContexto(ctx, nomeTokens, cidadeTokens) {
-  if (!nomeTokens.length || !cidadeTokens.length) return false;
+// lead "Rei dos Cosméticos") cola no lead errado. Mesmo fallback de nome
+// inteiro que relevanteUrl quando não sobra token específico.
+function relevanteContexto(ctx, nomeTokens, nomeCompleto, cidadeTokens) {
+  if (!cidadeTokens.length) return false;
   const ctxNorm = ctx || '';
-  return nomeTokens.some((t) => ctxNorm.includes(t)) && cidadeTokens.some((t) => ctxNorm.includes(t));
+  if (!cidadeTokens.some((t) => ctxNorm.includes(t))) return false;
+  if (nomeTokens.length) return nomeTokens.some((t) => ctxNorm.includes(t));
+  return Boolean(nomeCompleto.frase) && ctxNorm.includes(nomeCompleto.frase);
 }
 
-function isOfficialWebsite({ url, ctx }, nomeTokens, cidadeTokens) {
+function isOfficialWebsite({ url, ctx }, nomeTokens, nomeCompleto, cidadeTokens) {
   const low = url.split('?')[0].toLowerCase();
   if (NON_WEBSITE_HOSTS.some((h) => low.includes(h))) return false;
 
@@ -338,17 +374,17 @@ function isOfficialWebsite({ url, ctx }, nomeTokens, cidadeTokens) {
   if (!host || !host.includes('.')) return false;
 
   const hostClean = host.split('.')[0];
-  return relevanteUrl(hostClean, ctx, nomeTokens, cidadeTokens);
+  return relevanteUrl(hostClean, ctx, nomeTokens, nomeCompleto, cidadeTokens);
 }
 
-function firstSocial(links, domain, bad, nomeTokens, cidadeTokens) {
+function firstSocial(links, domain, bad, nomeTokens, nomeCompleto, cidadeTokens) {
   for (const { url, ctx } of links) {
     const low = url.toLowerCase();
     if (!low.includes(domain)) continue;
     if (bad.some((b) => low.includes(b))) continue;
     // Corta a query string antes de checar relevância: parâmetros de
     // rastreio (utm_source=... etc.) podiam injetar texto e inflar match.
-    if (!relevanteUrl(url.split('?')[0], ctx, nomeTokens, cidadeTokens)) continue;
+    if (!relevanteUrl(url.split('?')[0], ctx, nomeTokens, nomeCompleto, cidadeTokens)) continue;
     return url.split('?')[0].replace(/\/$/, '');
   }
   return null;
@@ -360,7 +396,7 @@ const EMAIL_PROVIDERS_GENERICOS = new Set([
   'msn.com', 'globo.com', 'ig.com.br', 'oi.com.br', 'r7.com',
 ]);
 
-function firstEmail(html, nomeTokens, cidadeTokens) {
+function firstEmail(html, nomeTokens, nomeCompleto, cidadeTokens) {
   if (!html) return null;
   const seen = new Set();
   for (const m of html.matchAll(EMAIL_RE)) {
@@ -376,8 +412,8 @@ function firstEmail(html, nomeTokens, cidadeTokens) {
     // nome do lead no domínio. Provedor genérico: exige nome+cidade no texto
     // ao redor (ver relevanteContexto).
     const ok = EMAIL_PROVIDERS_GENERICOS.has(dominio)
-      ? relevanteContexto(ctx, nomeTokens, cidadeTokens)
-      : relevanteUrl(dominio, ctx, nomeTokens, cidadeTokens);
+      ? relevanteContexto(ctx, nomeTokens, nomeCompleto, cidadeTokens)
+      : relevanteUrl(dominio, ctx, nomeTokens, nomeCompleto, cidadeTokens);
     if (!ok) continue;
     return email;
   }
@@ -401,19 +437,20 @@ export async function enrichLead(input) {
     // ── 1ª SERP (DDG, fallback Bing) ────────────────────────────────────
     const { html, links } = await buscarComFallback(`"${name}" ${city}`);
     const tokens = tokensSignificativos(name);
+    const nomeCompleto = nomeCompletoFallback(name);
     const cidadeTokens = tokensCidade(city);
 
     // Redes sociais (com bad-filters iguais ao Python + filtro de relevância nome+cidade)
-    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts'], tokens, cidadeTokens);
-    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups'], tokens, cidadeTokens);
-    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/'], tokens, cidadeTokens);
+    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts'], tokens, nomeCompleto, cidadeTokens);
+    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups'], tokens, nomeCompleto, cidadeTokens);
+    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/'], tokens, nomeCompleto, cidadeTokens);
 
     // E-mail
-    out.email = firstEmail(html, tokens, cidadeTokens);
+    out.email = firstEmail(html, tokens, nomeCompleto, cidadeTokens);
 
     // Website oficial (1º que casar)
     for (const item of links) {
-      if (isOfficialWebsite(item, tokens, cidadeTokens)) {
+      if (isOfficialWebsite(item, tokens, nomeCompleto, cidadeTokens)) {
         out.discoveredWebsite = item.url.split('?')[0].replace(/\/$/, '');
         break;
       }
@@ -423,7 +460,7 @@ export async function enrichLead(input) {
     if (!out.email && budgetOk()) {
       try {
         const { html: html2 } = await buscarComFallback(`"${name}" ${city} email contato`);
-        out.email = firstEmail(html2, tokens, cidadeTokens);
+        out.email = firstEmail(html2, tokens, nomeCompleto, cidadeTokens);
       } catch {
         // Falha na 2ª (DDG e Bing) não quebra o resultado parcial
       }
