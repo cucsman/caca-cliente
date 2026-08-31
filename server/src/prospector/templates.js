@@ -64,12 +64,20 @@ export const linkSoWhatsapp = (lead) => {
 // page (NUNCA sistema, agendamento ou automação — regra do manual seção 1).
 // O [Seu nome] é substituído pelo perfil do aluno no front (aplicarPerfil).
 export const semPresencaDigital = (lead) => {
-  const { nome, nicho, cidade } = lead;
+  const { nome, nicho, cidade, temSite } = lead;
   const cidadeCurta = (cidade || '').split(',')[0].trim();
   const busca = `${nicho || 'o serviço de vocês'}${cidadeCurta ? ` em ${cidadeCurta}` : ' na região'}`;
+  // Esse ângulo também é escolhido pra leads sem Instagram conhecido mas que
+  // JÁ têm site (ex: OSM não tinha a tag, mas o DDG achou um discoveredWebsite
+  // durante o enriquecimento). "Procurei o site e não encontrei" seria uma
+  // afirmação falsa nesse caso — a linha só entra quando temSite não é true
+  // (false ou desconhecido).
+  const gancho = temSite === true
+    ? 'Vi as avaliações de vocês no Google, são ótimas.'
+    : 'Vi as avaliações de vocês no Google, são ótimas. Procurei o site de vocês e não encontrei.';
   return [
     saudacao(nome),
-    'Vi as avaliações de vocês no Google, são ótimas. Procurei o site de vocês e não encontrei.',
+    gancho,
     `Me chamo [Seu nome], crio sites profissionais pra vocês aparecerem no Google quando alguém buscar ${busca}.`,
     'Posso te mostrar alguns exemplos do meu trabalho, sem compromisso?',
   ].join('\n');
