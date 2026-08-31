@@ -6,6 +6,7 @@ import { createSearch, attachStream, prioritizeLead, getSearchLeads, updateLead,
 import { toCSV, toXLSX } from '../export/exporter.js';
 import { listSearches, statsConversao, dbEnabled, dbKind, dbWarning } from '../db.js';
 import { scoreLead } from '../utils/score.js';
+import { assertPublicUrl } from '../utils/ssrf.js';
 
 const router = Router();
 const slug = (s) =>
@@ -126,8 +127,13 @@ router.post('/api/search/:searchId/webhook', async (req, res) => {
   if (!data) return res.status(404).json({ error: 'Busca não encontrada (sessão expirada?).' });
 
   const url = (req.body?.url ?? '').toString().trim();
-  // NB: produção deve barrar IPs internos (proteção SSRF) antes de postar.
   if (!/^https?:\/\/.+/i.test(url)) return res.status(400).json({ error: 'Informe uma URL http(s) válida.' });
+
+  try {
+    await assertPublicUrl(url);
+  } catch (e) {
+    return res.status(400).json({ error: `URL não permitida: ${e.message}` });
+  }
 
   try {
     const r = await fetch(url, {
