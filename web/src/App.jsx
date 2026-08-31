@@ -246,7 +246,7 @@ export default function App() {
               <button type="button" className="link-btn" onClick={() => setDbWarningDismissed(true)}>ok, entendi</button>
             </div>
           )}
-          <SearchBar onSearch={runSearch} loading={loading} />
+          <SearchBar onSearch={runSearch} loading={loading} activeSearchId={search?.searchId} activeQuery={search?.query} />
           {searchError && (
             <div className="search-error" role="alert">
               <strong>Não consegui buscar agora.</strong> {searchError}

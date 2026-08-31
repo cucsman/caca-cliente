@@ -57,7 +57,7 @@ const NICHE_PRESETS = [
   { label: 'Ótica', value: 'ótica' },
 ];
 
-export default function SearchBar({ onSearch, loading }) {
+export default function SearchBar({ onSearch, loading, activeSearchId, activeQuery }) {
   const [niche, setNiche] = useState('salão de beleza');
   // 'preset' = um dos atalhos selecionado · 'outros' = input livre · '' = indefinido
   const [preset, setPreset] = useState('salão de beleza');
@@ -94,6 +94,23 @@ export default function SearchBar({ onSearch, loading }) {
     }, 450);
     return () => clearTimeout(t);
   }, [cityQuery, selectedCity]);
+
+  // Reabrir uma busca do histórico (ou restaurá-la ao dar F5) troca o `search`
+  // ativo no App sem passar pelo submit() daqui — sem isso o formulário ficava
+  // "preso" nos últimos valores digitados, divergindo da busca realmente aberta
+  // (ex: reabre Recife, mas o campo de cidade continua mostrando a última
+  // cidade buscada por este componente).
+  useEffect(() => {
+    if (!activeQuery) return;
+    const isPreset = NICHE_PRESETS.some((p) => p.value === activeQuery.niche);
+    setPreset(isPreset ? activeQuery.niche : 'outros');
+    setNiche(activeQuery.niche ?? '');
+    setCityQuery(activeQuery.city ?? '');
+    setSelectedCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng });
+    if (activeQuery.radiusKm) setRadiusKm(activeQuery.radiusKm);
+    saveLastSearchCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSearchId]);
 
   function chooseCity(s) {
     setSelectedCity(s);
