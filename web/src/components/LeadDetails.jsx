@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { aplicarPerfil, waLinkWithMessage } from '../lib/whatsapp.js';
 
 // Tipos que o motor sabe gerar (server/src/prospector/engine.js), com rótulo
@@ -40,9 +40,14 @@ export default function LeadDetails({ lead, searchId, onSave, onClose }) {
   const [msgError, setMsgError] = useState('');
   const [copied, setCopied] = useState(false);
   const [tipoSel, setTipoSel] = useState('auto');
+  // Rastreia o lead "ativo" pra descartar respostas de gerarMensagem() que
+  // chegam depois de trocar de lead (evita a mensagem de um lead antigo
+  // sobrescrever o estado de outro já aberto).
+  const activeLeadIdRef = useRef(null);
 
   useEffect(() => {
     if (!lead) return;
+    activeLeadIdRef.current = lead.id;
     setNotes(lead.notes ?? '');
     setFollowUpAt(lead.followUpAt ?? '');
     setTags(lead.tags ?? []);
@@ -65,6 +70,7 @@ export default function LeadDetails({ lead, searchId, onSave, onClose }) {
   const toggleTag = (t) => setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
   async function gerarMensagem() {
+    const leadId = lead.id;
     setMsgState('loading');
     setMsgError('');
     setCopied(false);
@@ -73,16 +79,18 @@ export default function LeadDetails({ lead, searchId, onSave, onClose }) {
       if (searchId) params.set('searchId', searchId);
       if (tipoSel !== 'auto') params.set('tipo', tipoSel);
       const qs = params.toString();
-      const url = `/api/leads/${encodeURIComponent(lead.id)}/message${qs ? `?${qs}` : ''}`;
+      const url = `/api/leads/${encodeURIComponent(leadId)}/message${qs ? `?${qs}` : ''}`;
       const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.error || `Erro ${r.status} ao gerar mensagem`);
       }
       const data = await r.json();
+      if (activeLeadIdRef.current !== leadId) return; // trocou de lead enquanto esperava
       setMsgData({ ...data, mensagem: aplicarPerfil(data.mensagem) });
       setMsgState('success');
     } catch (e) {
+      if (activeLeadIdRef.current !== leadId) return; // trocou de lead enquanto esperava
       setMsgError(e.message || 'Não consegui gerar a mensagem.');
       setMsgState('error');
     }
