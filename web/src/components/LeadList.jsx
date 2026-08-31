@@ -15,9 +15,13 @@ function Skeleton() {
 export default function LeadList({ leads, selectedId, onSelect, onOpenDetails, loading }) {
   const refs = useRef({});
 
-  // Clicou no pino do mapa → o card correspondente rola até ficar visível
+  // Clicou no pino do mapa → o card correspondente rola até ficar visível.
+  // behavior:'auto' (instantâneo) de propósito: com 'smooth' a animação era
+  // cancelada silenciosamente pelo reflow do stream de enriquecimento (SSE
+  // atualiza `leads` a cada poucos segundos enquanto a busca ainda processa),
+  // deixando o scroll em 0 — ou seja, o card selecionado nunca aparecia.
   useEffect(() => {
-    if (selectedId) refs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (selectedId) refs.current[selectedId]?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
   }, [selectedId]);
 
   if (loading) {

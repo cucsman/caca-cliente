@@ -81,9 +81,12 @@ export default function App() {
   }, [search]);
 
   // Cinto de segurança: ao selecionar um lead, garante que o mapa fique visível
+  // (mobile: sidebar e mapa empilhados). behavior:'auto' pelo mesmo motivo do
+  // scroll da lista em LeadList.jsx — 'smooth' é cancelado pelo reflow do
+  // stream de enriquecimento (SSE) e o scroll nunca chega a acontecer.
   useEffect(() => {
     if (!selectedId) return;
-    document.querySelector('.map-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.querySelector('.map-wrap')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
   }, [selectedId]);
 
   // FASE 1 — busca síncrona: pinos e cards aparecem de imediato
