@@ -265,8 +265,18 @@ function destroySearch(id) {
 }
 
 // Fallback offline (ENRICH_PROVIDER=mock): contatos fictícios, sem rede.
+// Sempre devolve um objeto (nunca null) — mesmo contrato do enrichLead real
+// ("sempre um objeto válido, mesmo em erro/bloqueio"), incluindo uma fração
+// simulando busca bloqueada/timeout (partial:true) pra dar pro front/QA como
+// testar esse estado sem precisar de uma busca real bloqueada pelo DDG.
 function mockEnrichment(lead) {
-  if (Math.random() < 0.15) return null;
+  if (Math.random() < 0.12) {
+    return {
+      email: null, instagram: null, facebook: null, linkedin: null,
+      whatsapp: lead.phone || null, confidence: 0, partial: true,
+      discoveredWebsite: null, linkBroken: null,
+    };
+  }
   const slug = lead.name.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^a-z0-9]+/g, '');
   return {
     email: Math.random() < 0.6 ? `contato@${slug}.com.br` : null,
@@ -276,5 +286,7 @@ function mockEnrichment(lead) {
     whatsapp: lead.phone,
     confidence: 0.7,
     partial: false,
+    discoveredWebsite: null,
+    linkBroken: null,
   };
 }
