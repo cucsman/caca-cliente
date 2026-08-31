@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import * as db from '../db.js';
 import { scoreLead } from '../utils/score.js';
 import { enrichLead } from './enrichWorker.js';
+import { reverseGeocodeEndereco } from '../data/geocode.js';
 
 // Gerencia as sessões SSE E executa o enriquecimento real (enrichWorker.js —
 // DuckDuckGo, gratuito). Uma fila com concorrência limitada mantém o ritmo
@@ -209,6 +210,24 @@ function pump(session) {
 
 async function runOne(session, lead) {
   await sleep(200 + Math.random() * 800); // jitter: educado com o DuckDuckGo
+
+  // Fallback de endereço (Nominatim reverse geocoding) dispara em paralelo mas
+  // SEM travar a fila do DDG: o Nominatim é limitado a 1 req/seg compartilhado
+  // entre TODOS os leads da busca (ver geocode.js), bem mais lento que o DDG.
+  // Se isso aqui fosse `await`ado junto do enrichLead, o ritmo de toda a fila
+  // caía pro ritmo do Nominatim (medido: ~2s/lead virou ~6-20s/lead). Por isso
+  // roda solto e manda seu próprio evento SSE quando (e se) resolver.
+  if (!USE_MOCK && lead.addressMissing && lead.lat != null && lead.lng != null) {
+    reverseGeocodeEndereco(lead.lat, lead.lng).then((addr) => {
+      if (!addr) return;
+      lead.address = addr;
+      lead.addressSource = 'nominatim';
+      lead.addressMissing = false;
+      broadcast(session, 'enrichment', payloadOf(lead));
+      if (db.dbEnabled) session.dbReady.then(() => db.saveEnrichment(session.id, lead)).catch(() => {});
+    }).catch(() => {});
+  }
+
   const enrichment = USE_MOCK ? mockEnrichment(lead) : await enrichLead({ name: lead.name, city: session.city, phone: lead.phone });
 
   lead.enrichment = enrichment;
@@ -222,10 +241,13 @@ async function runOne(session, lead) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+// address/addressSource só vão no payload quando o fallback de reverse
+// geocoding mudou o endereço (evita reenviar o que o front já tem da FASE 1).
 const payloadOf = (lead) => ({
   leadId: lead.id,
   status: lead.enrichmentStatus,
   enrichment: lead.enrichment,
+  ...(lead.addressSource === 'nominatim' ? { address: lead.address, addressSource: lead.addressSource } : {}),
   score: scoreLead(lead, lead.enrichment),
 });
 const allSettled = (s) => [...s.leads.values()].every((l) => l.enrichmentStatus !== 'pending');

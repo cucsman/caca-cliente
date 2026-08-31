@@ -147,6 +147,10 @@ async function fetchOverpass(query) {
   throw new RetryError('Overpass', ENDPOINTS.length, lastErr);
 }
 
+// Exportado pra osmProvider e enricher.js concordarem sobre o que é "sem
+// endereço" — usado pra disparar o fallback de reverse geocoding (Nominatim).
+export const NO_ADDRESS = 'Endereço não informado no OSM';
+
 function assembleAddress(t) {
   const parts = [];
   const street = t['addr:street'];
@@ -156,7 +160,7 @@ function assembleAddress(t) {
   if (area) parts.push(area);
   const city = t['addr:city'] || t['addr:town'];
   if (city) parts.push(city);
-  return parts.join(' – ') || city || area || 'Endereço não informado no OSM';
+  return parts.join(' – ') || city || area || NO_ADDRESS;
 }
 
 function mapElement(el) {
@@ -168,11 +172,15 @@ function mapElement(el) {
 
   const website = t.website || t['contact:website'] || t.url || t['website:official'] || t['contact:url'];
   const phone = t.phone || t['contact:phone'] || t['contact:mobile'] || null;
+  const address = assembleAddress(t);
   return {
     id: `osm:${el.type}/${el.id}`,
     source: 'osm', // rastreabilidade da origem do dado (boa prática LGPD)
     name,
-    address: assembleAddress(t),
+    address,
+    // true quando addr:* faltou no OSM — sinaliza pro enricher.js tentar o
+    // fallback de reverse geocoding (Nominatim) durante o enriquecimento async.
+    addressMissing: address === NO_ADDRESS,
     phone,
     rating: null, // OSM não tem avaliações
     reviewsCount: null,
