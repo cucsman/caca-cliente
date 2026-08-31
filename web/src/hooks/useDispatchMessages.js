@@ -118,7 +118,7 @@ export function useDispatchMessages({ searchId, leads }) {
 
     function aplicarFallback(lead, motivo) {
       cache.current.set(lead.id, {
-        mensagem: aplicarPerfil(mensagemFallbackManual(lead.name, lead.niche)),
+        mensagem: aplicarPerfil(mensagemFallbackManual(lead.name, lead.niche, Boolean(lead.enrichment?.discoveredWebsite))),
         angulo: null,
         proximaAcao: null,
         fonte: 'fallback',

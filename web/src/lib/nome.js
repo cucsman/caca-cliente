@@ -10,7 +10,9 @@ const KEYWORDS_EMPRESA = [
   'clinica', 'clínica',
   'salao', 'salão',
   'studio', 'studío', 'estudio', 'estúdio',
-  'barbearia',
+  'barbearia', 'barbeiro', 'barbeira',
+  'beleza', 'sobrancelha', 'maquiagem', 'maquiadora', 'manicure', 'pedicure',
+  'cabeleireiro', 'cabeleireira', 'spa', 'depilacao', 'depilação',
   'restaurante',
   'pizzaria',
   'hotel',
@@ -158,11 +160,20 @@ export function saudacao(nome) {
 //
 // Esta é a mensagem que o aluno vê quando o endpoint do motor está offline.
 // Curta, natural, sem "crio sites com IA". O aluno pode editar antes de enviar.
-export function mensagemFallbackManual(nome, nicho) {
+//
+// temSite: espelha o fix do server (semPresencaDigital em
+// server/src/prospector/templates.js) — um lead sem Instagram conhecido pode
+// já ter site (o OSM não tinha a tag, mas o enriquecimento achou um
+// discoveredWebsite depois). "Procurei o site e não encontrei" seria uma
+// afirmação falsa nesse caso, então a frase só entra quando temSite !== true.
+export function mensagemFallbackManual(nome, nicho, temSite = false) {
   const abertura = saudacao(nome);
   const busca = nicho ? `quando alguém buscar ${nicho} na região` : 'quando alguém buscar o serviço de vocês na região';
+  const gancho = temSite === true
+    ? 'Vi as avaliações de vocês no Google, são ótimas.'
+    : 'Vi as avaliações de vocês no Google, são ótimas. Procurei o site de vocês e não encontrei.';
   return [
-    `${abertura} Vi as avaliações de vocês no Google, são ótimas. Procurei o site de vocês e não encontrei.`,
+    `${abertura} ${gancho}`,
     `Me chamo [Seu nome], crio sites profissionais pra vocês aparecerem no Google ${busca}.`,
     'Posso te mostrar alguns exemplos do meu trabalho, sem compromisso?',
   ].join('\n');
