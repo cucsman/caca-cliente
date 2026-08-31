@@ -15,13 +15,35 @@
 // Brave Search API (free tier) ou Serper.dev.
 
 // ── Constantes (espelham enrich.py) ──────────────────────────────────────────
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+// Pool de User-Agents reais (desktop) pra variar entre tentativas — reduz (mas
+// NÃO elimina) a chance de bloqueio por fingerprint fixo. Ver nota em serp().
+const UA_POOL = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 ' +
+    '(KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/123.0 Safari/537.36 Edg/123.0',
+];
+const UA = UA_POOL[0]; // usado pelo fetch do link do Linktree (fora do serp())
 const DDG = 'https://html.duckduckgo.com/html/';
 const TIMEOUT_LEAD = 9000; // ms, orçamento total por lead
 const REQ_TIMEOUT = 6000;  // ms, timeout individual SERP
-const SERP_RETRIES = 2;    // tentativas após 1ª falha (total 3)
-const SERP_BASE_MS = 600;  // backoff base
+const SERP_RETRIES = 1;    // tentativas após 1ª falha (total 2)
+const SERP_BASE_MS = 500;  // backoff base
+// Status que indicam bloqueio/anti-bot do DDG, não "sem resultado". Medido em
+// produção (probe manual, ago/2026): endpoint bloqueia ~87% dos requests com
+// 202 (challenge page) e, sob carga repetida do mesmo IP, escala pra 403 —
+// bloqueio PERSISTENTE por reputação de IP, não pico transitório (confirmado:
+// continuava bloqueado após 45s de espera). Testado empiricamente: subir
+// SERP_RETRIES/backoff (3 tentativas, base 900ms) NÃO aumentou taxa de
+// sucesso, só multiplicou a latência por lead de ~2s pra ~20s+ — revertido.
+// Mantemos retry curto só pra cobrir hiccups de rede genuínos (não o bloqueio
+// em si); o ganho real contra o bloqueio é marcar `partial:true` honestamente
+// (em vez de mascarar como not_found) e o fallback de endereço via Nominatim.
+const SERP_BLOCK_STATUSES = [202, 403, 418, 429];
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const HREF_RE = /href="(https?:\/\/[^"]+)"/gi;
@@ -66,30 +88,35 @@ function unescapeHtml(str) {
 async function serp(query) {
   let lastErr;
   for (let attempt = 0; attempt <= SERP_RETRIES; attempt++) {
-    if (attempt > 0) await sleep(SERP_BASE_MS * Math.pow(2, attempt - 1));
+    if (attempt > 0) {
+      const jitter = 1 + (Math.random() - 0.5) * 0.4; // ±20%
+      await sleep(SERP_BASE_MS * Math.pow(2, attempt - 1) * jitter);
+    }
     try {
       const res = await fetch(DDG, {
         method: 'POST',
         headers: {
-          'User-Agent': UA,
+          'User-Agent': UA_POOL[attempt % UA_POOL.length],
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({ q: query }),
         signal: AbortSignal.timeout(REQ_TIMEOUT),
       });
-      // 202/418/429 = rate limit / anti-bot — retry with backoff
-      if ([202, 418, 429].includes(res.status) && attempt < SERP_RETRIES) {
-        lastErr = new Error(`DDG HTTP ${res.status}`);
-        continue;
+      // 202/403/418/429 = rate limit / anti-bot. IMPORTANTE: 202 cai dentro do
+      // range 200-299 (res.ok === true) — NUNCA tratar como sucesso, mesmo na
+      // última tentativa, senão a página de challenge do DDG é parseada como
+      // se fosse resultado real (bug anterior: mascarava bloqueio como
+      // "not_found" genuíno em vez de `partial: true`).
+      if (SERP_BLOCK_STATUSES.includes(res.status)) {
+        lastErr = new Error(`DDG bloqueado (HTTP ${res.status})`);
+        if (attempt < SERP_RETRIES) continue;
+        throw lastErr;
       }
       if (!res.ok) throw new Error(`DDG HTTP ${res.status}`);
       return await res.text();
     } catch (err) {
       lastErr = err;
-      if (attempt < SERP_RETRIES) {
-        await sleep(SERP_BASE_MS * Math.pow(2, attempt - 1));
-        continue;
-      }
+      if (attempt < SERP_RETRIES) continue;
       throw lastErr;
     }
   }
