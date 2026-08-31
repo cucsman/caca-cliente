@@ -29,20 +29,24 @@ const UA_POOL = [
 ];
 const UA = UA_POOL[0]; // usado pelo fetch do link do Linktree (fora do serp())
 const DDG = 'https://html.duckduckgo.com/html/';
+const BING = 'https://www.bing.com/search';
 const TIMEOUT_LEAD = 9000; // ms, orçamento total por lead
 const REQ_TIMEOUT = 6000;  // ms, timeout individual SERP
-const SERP_RETRIES = 1;    // tentativas após 1ª falha (total 2)
+const SERP_RETRIES = 0;    // sem retry no DDG — ver nota abaixo (fallback pro Bing é o retry real)
 const SERP_BASE_MS = 500;  // backoff base
 // Status que indicam bloqueio/anti-bot do DDG, não "sem resultado". Medido em
-// produção (probe manual, ago/2026): endpoint bloqueia ~87% dos requests com
-// 202 (challenge page) e, sob carga repetida do mesmo IP, escala pra 403 —
-// bloqueio PERSISTENTE por reputação de IP, não pico transitório (confirmado:
-// continuava bloqueado após 45s de espera). Testado empiricamente: subir
-// SERP_RETRIES/backoff (3 tentativas, base 900ms) NÃO aumentou taxa de
-// sucesso, só multiplicou a latência por lead de ~2s pra ~20s+ — revertido.
-// Mantemos retry curto só pra cobrir hiccups de rede genuínos (não o bloqueio
-// em si); o ganho real contra o bloqueio é marcar `partial:true` honestamente
-// (em vez de mascarar como not_found) e o fallback de endereço via Nominatim.
+// produção (probe manual, ago/2026, repetido em condição de usuário real):
+// html.duckduckgo.com bloqueia entre 80% e 100% dos requests com 202/403
+// (challenge page), de forma PERSISTENTE — confirmado que reter/aumentar
+// retry (3 tentativas, base 900ms) não muda a taxa de sucesso, só multiplica
+// a latência (~2s -> ~20s+/lead). Confirmado também com relato de usuário
+// real (rede doméstica comum, fora de qualquer sandbox): 31/31 leads
+// bloqueados — não é artefato de IP de datacenter, é o DDG bloqueando de
+// forma agressiva mesmo. Por isso: 1 tentativa só no DDG (retry contra um
+// bloqueio persistente é desperdício de tempo) e fallback imediato pro Bing
+// HTML (ver buscarComFallback), que nos testes NÃO ficou bloqueado nenhuma
+// vez (ver decodeCitesBing) — poupa o orçamento de 9s/lead pra tentar uma
+// fonte que de fato responde, em vez de insistir numa que não responde.
 const SERP_BLOCK_STATUSES = [202, 403, 418, 429];
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
@@ -132,6 +136,102 @@ function decodeLinks(html) {
   return links;
 }
 
+// ── Bing HTML (fallback quando o DDG bloqueia) ───────────────────────────────
+// GET simples, sem JS, sem cadastro, sem chave — mesma filosofia do DDG.
+// Testado (ago/2026): não ficou bloqueado em nenhuma tentativa (status 200
+// sempre), diferente do DDG. LIMITAÇÃO HONESTA: pra nomes de negócio pouco
+// conhecidos (a maioria dos leads deste produto), o ranking do Bing às vezes
+// erra o alvo — ex.: "Fatima Cabelereiros" retornou resultados sobre a cidade
+// de Fátima em Portugal, "Studio Kona" sobre outro assunto qualquer — porque
+// o termo mais "forte"/indexado da frase domina a busca. Isso não introduz
+// falso positivo de rede social (o link errado raramente é instagram.com/
+// facebook.com), só reduz a taxa de "achei" pra nomes ambíguos/pouco famosos
+// — o resultado nesse caso é not_found honesto, não um dado errado.
+const CITE_RE = /<cite[^>]*>(.*?)<\/cite>/gis;
+const TAG_RE = /<[^>]+>/g;
+
+function decodeEntities(str) {
+  return unescapeHtml(str).replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
+}
+
+async function bingSearch(query) {
+  const url = `${BING}?${new URLSearchParams({ q: query, setlang: 'pt-BR', cc: 'BR' })}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'User-Agent': UA_POOL[0],
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    },
+    signal: AbortSignal.timeout(REQ_TIMEOUT),
+  });
+  if (!res.ok) throw new Error(`Bing HTTP ${res.status}`);
+  return await res.text();
+}
+
+// Extrai as URLs de resultado a partir das tags <cite> do Bing — NÃO dos
+// <a href>, que vêm embrulhados num redirect de rastreio (bing.com/ck/a?...)
+// sem seguir um hop extra. O <cite> já mostra a URL "de exibição" limpa, no
+// formato "https://dominio.com › caminho › quebrado" — reconstituímos pra
+// "https://dominio.com/caminho/quebrado".
+function decodeCitesBing(html) {
+  const links = [];
+  for (const m of html.matchAll(CITE_RE)) {
+    const texto = decodeEntities(m[1].replace(TAG_RE, '')).replace(/\s*›\s*/g, '/').trim();
+    if (/^https?:\/\//i.test(texto)) links.push(texto);
+  }
+  return links;
+}
+
+// Tenta o DDG primeiro (grátis, quando não bloqueado tem boa relevância);
+// se falhar/bloquear, cai pro Bing imediatamente (ver nota em SERP_RETRIES).
+// `partial` só fica true quando AMBOS falham — ver enrichLead().
+async function buscarComFallback(query) {
+  try {
+    const html = await serp(query);
+    return { html, links: decodeLinks(html) };
+  } catch {
+    const html = await bingSearch(query);
+    return { html, links: decodeCitesBing(html) };
+  }
+}
+
+// ── Filtro de relevância (nome do lead x URL/e-mail achado) ─────────────────
+// Necessário desde que o Bing entrou como fallback: pra nomes de negócio
+// pouco conhecidos/genéricos, o Bing às vezes retorna resultado de OUTRA
+// empresa com nome parecido (ex.: lead "Studio Factory" -> facebook de um
+// restaurante em Louisville, EUA; sem relação nenhuma). Exigimos que pelo
+// menos uma palavra significativa do nome do lead apareça na URL/domínio
+// antes de aceitar como resultado — reduz drasticamente os casos claramente
+// errados. LIMITAÇÃO HONESTA: não pega colisão com nome genérico que TAMBÉM
+// bate por substring (ex.: lead "Lush" vs a marca global Lush) — isso exigiria
+// verificar o conteúdo do perfil/cidade, fora do escopo desta camada.
+const GENERIC_TOKENS = new Set([
+  'de', 'do', 'da', 'dos', 'das', 'e', '&', 'associados', 'advogados',
+  'advocacia', 'studio', 'studío', 'estudio', 'estúdio', 'salao', 'salão',
+  'clinica', 'clínica', 'consultorio', 'consultório', 'instituto', 'centro',
+  'espaco', 'espaço', 'ateliê', 'atelie', 'casa', 'vila', 'ltda',
+  'cabeleireiro', 'cabeleireira', 'cabeleireiros', 'barbearia', 'barbeiro',
+  'estetica', 'estética', 'beleza', 'spa', 'academia',
+]);
+
+const normalizarNome = (s) => (s || '')
+  .toLowerCase()
+  .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  .replace(/[^a-z0-9 ]/g, ' ');
+
+function tokensSignificativos(leadName) {
+  return normalizarNome(leadName)
+    .split(/\s+/)
+    .filter((t) => t && !GENERIC_TOKENS.has(t) && t.length >= 3);
+}
+
+// alvo: URL, domínio ou e-mail já em minúsculas/sem acento — checa substring.
+function pareceRelacionado(alvo, tokens) {
+  if (!tokens.length) return false; // nome genérico demais pra validar com segurança
+  const alvoNorm = normalizarNome(alvo).replace(/\s+/g, '');
+  return tokens.some((t) => alvoNorm.includes(t));
+}
+
 function isOfficialWebsite(url, leadName) {
   const low = url.toLowerCase();
   if (NON_WEBSITE_HOSTS.some((h) => low.includes(h))) return false;
@@ -140,31 +240,32 @@ function isOfficialWebsite(url, leadName) {
   if (host.startsWith('www.')) host = host.slice(4);
   if (!host || !host.includes('.')) return false;
 
-  const GENERIC = new Set([
-    'de', 'do', 'da', 'dos', 'das', 'e', '&', 'associados', 'advogados',
-    'advocacia', 'studio', 'salao', 'clinica', 'consultorio',
-    'instituto', 'centro', 'espaco', 'ateliê', 'atelie', 'casa', 'vila', 'ltda',
-  ]);
-
-  const base = leadName.toLowerCase().replace(/[^a-z0-9 ]/g, '');
-  const tokens = base.split(' ').filter((t) => t && !GENERIC.has(t) && t.length >= 3);
-  if (!tokens.length) return false;
-
-  const hostClean = host.split('.')[0].replace(/[^a-z0-9]/g, '');
-  return tokens.some((t) => hostClean.includes(t));
+  const hostClean = host.split('.')[0];
+  return pareceRelacionado(hostClean, tokensSignificativos(leadName));
 }
 
-function firstSocial(links, domain, bad) {
+function firstSocial(links, domain, bad, tokens) {
   for (const url of links) {
     const low = url.toLowerCase();
-    if (low.includes(domain) && !bad.some((b) => low.includes(b))) {
+    if (low.includes(domain) && !bad.some((b) => low.includes(b)) && pareceRelacionado(url, tokens)) {
       return url.split('?')[0].replace(/\/$/, '');
     }
   }
   return null;
 }
 
-function firstEmail(html) {
+// Provedores genéricos (gmail, hotmail etc.) ficam de fora do filtro de
+// relevância: é muito comum um negócio pequeno usar e-mail pessoal sem
+// relação nenhuma com o nome fantasia, e isso é um contato válido de verdade.
+// O filtro de domínio só faz sentido pra domínio PRÓPRIO (aí sim, um domínio
+// próprio sem nenhuma palavra do nome do lead é sinal forte de empresa errada).
+const EMAIL_PROVIDERS_GENERICOS = new Set([
+  'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
+  'uol.com.br', 'bol.com.br', 'terra.com.br', 'icloud.com', 'live.com',
+  'msn.com', 'globo.com', 'ig.com.br', 'oi.com.br', 'r7.com',
+]);
+
+function firstEmail(html, tokens) {
   if (!html) return null;
   const seen = new Set();
   for (const m of html.matchAll(EMAIL_RE)) {
@@ -174,6 +275,8 @@ function firstEmail(html) {
     if (DOMAIN_BLOCK.some((b) => low.includes(b))) continue;
     if (seen.has(low)) continue;
     seen.add(low);
+    const dominio = low.split('@')[1] ?? '';
+    if (!EMAIL_PROVIDERS_GENERICOS.has(dominio) && !pareceRelacionado(dominio, tokens)) continue;
     return email;
   }
   return null;
@@ -193,17 +296,17 @@ export async function enrichLead(input) {
   try {
     const budgetOk = () => performance.now() - start < TIMEOUT_LEAD - 1500;
 
-    // ── 1ª SERP ───────────────────────────────────────────────────────
-    const html = await serp(`"${name}" ${city}`);
-    const links = decodeLinks(html);
+    // ── 1ª SERP (DDG, fallback Bing) ────────────────────────────────────
+    const { html, links } = await buscarComFallback(`"${name}" ${city}`);
+    const tokens = tokensSignificativos(name);
 
-    // Redes sociais (com bad-filters iguais ao Python)
-    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts']);
-    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups']);
-    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/']);
+    // Redes sociais (com bad-filters iguais ao Python + filtro de relevância)
+    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts'], tokens);
+    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups'], tokens);
+    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/'], tokens);
 
     // E-mail
-    out.email = firstEmail(html);
+    out.email = firstEmail(html, tokens);
 
     // Website oficial (1º que casar)
     for (const url of links) {
@@ -216,10 +319,10 @@ export async function enrichLead(input) {
     // ── 2ª SERP (só se faltou e-mail) ─────────────────────────────────
     if (!out.email && budgetOk()) {
       try {
-        const html2 = await serp(`"${name}" ${city} email contato`);
-        out.email = firstEmail(html2);
+        const { html: html2 } = await buscarComFallback(`"${name}" ${city} email contato`);
+        out.email = firstEmail(html2, tokens);
       } catch {
-        // Timeout na 2ª não quebra o resultado parcial
+        // Falha na 2ª (DDG e Bing) não quebra o resultado parcial
       }
     }
 
