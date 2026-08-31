@@ -31,6 +31,7 @@ export function createSearch(leads, meta = {}) {
     queue: [],
     inFlight: new Set(),
     running: 0,
+    leadWriteQueues: new Map(),
   };
   searches.set(id, session);
 
@@ -124,7 +125,19 @@ export function updateLead(searchId, leadId, patch = {}) {
     fields.enrichment = lead.enrichment;
   }
   if (Object.keys(fields).length && db.dbEnabled && s.dbReady) {
-    s.dbReady.then(() => db.saveLeadFields(searchId, leadId, fields)).catch(() => {});
+    // Serializa as escritas por lead: encadear direto em s.dbReady (que já
+    // resolveu) deixava cada PATCH disparar um saveLeadFields independente,
+    // e com Postgres (pool com várias conexões) a ORDEM DE CHEGADA no banco
+    // não tinha garantia de bater com a ordem de chamada — PATCHs rápidos no
+    // mesmo lead (arrastar no Kanban) podiam persistir um estado mais antigo
+    // por cima do mais novo. Encadeando na promise anterior desse leadId (em
+    // vez de sempre em dbReady), cada save só começa depois que o anterior
+    // terminou — mesma ordem de chegada, nos dois drivers.
+    const prevWrite = s.leadWriteQueues.get(leadId) ?? s.dbReady;
+    const thisWrite = prevWrite
+      .then(() => db.saveLeadFields(searchId, leadId, fields))
+      .catch((e) => console.error('[db] saveLeadFields:', e?.message ?? e));
+    s.leadWriteQueues.set(leadId, thisWrite);
   }
   return true;
 }
@@ -142,6 +155,7 @@ export async function reopenSearch(searchId) {
       leads: new Map(data.leads.map((l) => [l.id, l])),
       clients: new Set(), queue: [], inFlight: new Set(), running: 0,
       dbReady: Promise.resolve(),
+      leadWriteQueues: new Map(),
     };
     searches.set(searchId, s);
     setTimeout(() => destroySearch(searchId), TTL_MS);
