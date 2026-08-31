@@ -14,8 +14,9 @@ import ThemeToggle, { useTheme } from './components/ThemeToggle.jsx';
 import Brand from './components/Brand.jsx';
 import Welcome from './components/Welcome.jsx';
 import { leadScore } from './lib/score.js';
-import { lembrarCidade } from './lib/whatsapp.js';
+import { lembrarCidade, waLink } from './lib/whatsapp.js';
 import { useEnrichmentStream } from './hooks/useEnrichmentStream.js';
+import { useLeadMessages } from './hooks/useLeadMessages.js';
 
 const CENTRO_PADRAO = [-30.0427211, -51.1626625]; // Porto Alegre (bairro Bom Jesus)
 const hoje = () => new Date().toISOString().slice(0, 10);
@@ -180,7 +181,32 @@ export default function App() {
     },
     [search]
   );
-  const moveLead = useCallback((leadId, stage) => patchLead(leadId, { stage }), [patchLead]);
+  // Pré-carrega e cacheia (por leadId) as mensagens de abordagem do motor real
+  // pra TODA a busca — mesma engine e mesma estratégia de fallback do Modo
+  // Disparo (useLeadMessages), só que sem tipo fixo (o motor infere pelo
+  // estágio de cada lead) e cobrindo os botões rápidos de WhatsApp em
+  // LeadCard/KanbanBoard/MapPanel via resolveWaLink. Só busca pra quem tem
+  // WhatsApp válido — sem isso, gastaria requisição em lead que nunca mostra
+  // o botão.
+  const leadsComWhats = useMemo(
+    () => leads.filter((l) => !l.waInvalid && waLink(l.phone, l.name, l.niche)),
+    [leads]
+  );
+  const { getMensagem, invalidate: invalidateMensagem } = useLeadMessages({
+    searchId: search?.searchId,
+    leads: leadsComWhats,
+  });
+
+  // Mudar de estágio (Kanban) pode mudar a mensagem que o motor gera (quando
+  // o tipo é inferido automaticamente pelo estágio) — invalida o cache desse
+  // lead pra não continuar mostrando a mensagem antiga depois de mover.
+  const moveLead = useCallback(
+    (leadId, stage) => {
+      patchLead(leadId, { stage });
+      invalidateMensagem(leadId);
+    },
+    [patchLead, invalidateMensagem]
+  );
 
   // Reabre uma busca salva (do histórico): re-hidrata do banco e popula a tela
   const openSearch = useCallback(async (searchId) => {
@@ -345,7 +371,7 @@ export default function App() {
         {!search && !loading ? (
           <Welcome />
         ) : (
-          <LeadList leads={visibleLeads} selectedId={selectedId} onSelect={selectLead} onOpenDetails={setDetailId} loading={loading} />
+          <LeadList leads={visibleLeads} selectedId={selectedId} onSelect={selectLead} onOpenDetails={setDetailId} loading={loading} getMensagem={getMensagem} />
         )}
         <Brand />
       </aside>
@@ -365,10 +391,11 @@ export default function App() {
             selectedId={selectedId}
             onSelect={selectLead}
             searchId={search?.searchId}
+            getMensagem={getMensagem}
           />
         )}
         {view === 'kanban' && (
-          <KanbanBoard leads={visibleLeads} selectedId={selectedId} onSelect={selectLead} onMove={moveLead} onDispatch={setDispatchLeads} />
+          <KanbanBoard leads={visibleLeads} selectedId={selectedId} onSelect={selectLead} onMove={moveLead} onDispatch={setDispatchLeads} getMensagem={getMensagem} />
         )}
         {view === 'stats' && <StatsPanel leads={leads} />}
       </main>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { waLink } from '../lib/whatsapp.js';
+import { resolveWaLink } from '../lib/whatsapp.js';
 
 // Pino via divIcon (CSS puro): a cor reflete o status do enriquecimento em
 // tempo real E evita o problema clássico dos assets do ícone padrão do
@@ -35,10 +35,10 @@ function FlyToSelected({ leads, selectedId }) {
   return null;
 }
 
-function LeadMarker({ lead, selected, onSelect }) {
+function LeadMarker({ lead, selected, onSelect, getMensagem }) {
   const ref = useRef(null);
   const icon = useMemo(() => pinIcon(lead.enrichmentStatus, selected), [lead.enrichmentStatus, selected]);
-  const wa = waLink(lead.phone, lead.name, lead.niche);
+  const wa = resolveWaLink(lead, getMensagem);
 
   useEffect(() => {
     if (selected) ref.current?.openPopup();
@@ -74,7 +74,7 @@ function LeadMarker({ lead, selected, onSelect }) {
   );
 }
 
-export default function MapPanel({ center, radiusKm, leads, selectedId, onSelect, searchId }) {
+export default function MapPanel({ center, radiusKm, leads, selectedId, onSelect, searchId, getMensagem }) {
   return (
     <MapContainer center={center} zoom={13} className="map" scrollWheelZoom>
       <TileLayer
@@ -85,7 +85,7 @@ export default function MapPanel({ center, radiusKm, leads, selectedId, onSelect
         <Circle center={center} radius={radiusKm * 1000} pathOptions={{ color: '#1f6feb', weight: 1, fillOpacity: 0.04 }} />
       )}
       {leads.map((l) => (
-        <LeadMarker key={l.id} lead={l} selected={l.id === selectedId} onSelect={onSelect} />
+        <LeadMarker key={l.id} lead={l} selected={l.id === selectedId} onSelect={onSelect} getMensagem={getMensagem} />
       ))}
       <FitToResults leads={leads} searchId={searchId} />
       <FlyToSelected leads={leads} selectedId={selectedId} />

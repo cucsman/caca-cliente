@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { waLink, WA_LIMIT } from '../lib/whatsapp.js';
+import { resolveWaLink, WA_LIMIT } from '../lib/whatsapp.js';
 import { leadScore, scoreTier, scoreBarClass } from '../lib/score.js';
 import { fmtMoneyCompact } from '../lib/format.js';
 
@@ -12,7 +12,7 @@ const STAGES = [
   { key: 'descartado', label: 'Descartado' },
 ];
 
-export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDispatch }) {
+export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDispatch, getMensagem }) {
   const [overCol, setOverCol] = useState(null);
   const [chosen, setChosen] = useState(() => new Set()); // seleção p/ envio em massa
 
@@ -100,7 +100,8 @@ export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDis
             </header>
             <div className="kanban-cards">
               {byStage[st.key].map((l) => {
-                const wa = waLink(l.phone, l.name, l.niche);
+                const msg = getMensagem?.(l.id);
+                const wa = resolveWaLink(l, getMensagem);
                 const score = leadScore(l);
                 const tier = scoreTier(score);
                 return (
@@ -153,6 +154,7 @@ export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDis
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
+                        title={msg?.fonte === 'fallback' ? 'Mensagem gerada localmente (motor indisponível) — revise antes de enviar' : undefined}
                       >
                         💬 WhatsApp
                       </a>

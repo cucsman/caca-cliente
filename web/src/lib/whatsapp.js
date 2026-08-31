@@ -228,3 +228,19 @@ export function waLinkWithMessage(phone, message) {
   if (!d || !message) return null;
   return `https://wa.me/${d}?text=${encodeURIComponent(message)}`;
 }
+
+// ── Fonte única do link de WhatsApp "rápido" (LeadCard, KanbanBoard, MapPanel) ──
+// Usa a mensagem do motor real (server/src/prospector/), pré-carregada em cache
+// por useLeadMessages, sempre que já estiver disponível — é a mesma engine que
+// o Modo Disparo usa. Enquanto o cache ainda não resolveu pra esse lead (busca
+// recém-aberta, ou o motor falhou), cai pro template local (montarMensagem/
+// MODELOS_ABORDAGEM) como fallback imediato: o botão nunca fica travado
+// esperando fetch. `getMensagem` é o accessor devolvido por useLeadMessages;
+// passar undefined (ou omitir) sempre usa o fallback local diretamente.
+export function resolveWaLink(lead, getMensagem) {
+  if (lead.waInvalid) return null;
+  const cached = getMensagem?.(lead.id);
+  if (cached?.mensagem) return waLinkWithMessage(lead.phone, cached.mensagem);
+  const hasSite = Boolean(lead.enrichment?.discoveredWebsite);
+  return waLink(lead.phone, lead.name, lead.niche, hasSite);
+}

@@ -1,4 +1,4 @@
-import { waLink } from '../lib/whatsapp.js';
+import { resolveWaLink } from '../lib/whatsapp.js';
 import { mailtoLink } from '../lib/email.js';
 import { leadScore, scoreTier, scoreBarClass } from '../lib/score.js';
 import { fmtMoney } from '../lib/format.js';
@@ -6,9 +6,10 @@ import { fmtMoney } from '../lib/format.js';
 const stop = (ev) => ev.stopPropagation();
 const hoje = () => new Date().toISOString().slice(0, 10);
 
-export default function LeadCard({ lead, selected, onSelect, onOpenDetails }) {
+export default function LeadCard({ lead, selected, onSelect, onOpenDetails, getMensagem }) {
   const e = lead.enrichment;
-  const wa = lead.waInvalid ? null : waLink(lead.phone, lead.name, lead.niche);
+  const msg = getMensagem?.(lead.id);
+  const wa = resolveWaLink(lead, getMensagem);
   const mail = mailtoLink(e?.email, lead.name, lead.niche);
   const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(`"${lead.name}"${lead.address ? ` ${lead.address}` : ''}`)}`;
   const score = leadScore(lead);
@@ -59,7 +60,16 @@ export default function LeadCard({ lead, selected, onSelect, onOpenDetails }) {
 
       <div className="card-actions">
         {wa && (
-          <a className="wa-btn wa-btn--sm" href={wa} target="_blank" rel="noreferrer" onClick={stop}>💬 WhatsApp</a>
+          <a
+            className="wa-btn wa-btn--sm"
+            href={wa}
+            target="_blank"
+            rel="noreferrer"
+            onClick={stop}
+            title={msg?.fonte === 'fallback' ? 'Mensagem gerada localmente (motor indisponível) — revise antes de enviar' : undefined}
+          >
+            💬 WhatsApp
+          </a>
         )}
         {mail && (
           <a className="mail-btn" href={mail} onClick={stop}>✉️ E-mail</a>
