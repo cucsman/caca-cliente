@@ -159,6 +159,20 @@ export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDis
                         💬 WhatsApp
                       </a>
                     )}
+                    {/* Fallback pra touch: arrastar (drag HTML5) não funciona em celular sem
+                        polyfill, então isso é a única forma de mudar de coluna no mobile.
+                        Fica escondido no desktop (CSS) pra não competir com o drag. */}
+                    <select
+                      className="kanban-move"
+                      value={l.stage ?? 'novo'}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onMove(l.id, e.target.value)}
+                      aria-label={`Mover ${l.name} para outra coluna`}
+                    >
+                      {STAGES.map((s) => (
+                        <option key={s.key} value={s.key}>Mover para: {s.label}</option>
+                      ))}
+                    </select>
                   </article>
                 );
               })}

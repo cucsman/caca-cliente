@@ -476,6 +476,8 @@ body {
 .kanban-card strong { font-size: 13.5px; }
 .kanban-contacts { display: flex; gap: 6px; margin-top: 6px; font-size: var(--font-sm); align-items: center; }
 .kanban-empty { color: var(--text-subtle); text-align: center; font-size: var(--font-sm); padding: var(--space-3) 0; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); }
+/* Fallback de mover por toque: escondido no desktop, onde o drag-and-drop já funciona. */
+.kanban-move { display: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot--wait { background: var(--warning); animation: pulse 1.4s ease-in-out infinite; }
 
@@ -823,6 +825,14 @@ body {
   /* Kanban ajuste mobile */
   .kanban { padding: var(--space-2); gap: var(--space-2); }
   .kanban-col { flex: 0 0 180px; }
+  /* Drag-and-drop HTML5 não funciona em touch sem polyfill — sem isso o
+     Kanban ficava impossível de usar no celular (nenhuma forma de mudar
+     de coluna). O select some no desktop, onde o drag já funciona. */
+  .kanban-move {
+    display: block; width: 100%; margin-top: 6px; min-height: 40px;
+    font-size: var(--font-sm); border-radius: var(--radius-md);
+    border: 1px solid var(--border-strong); background: var(--bg-muted); color: var(--text);
+  }
   /* No horizontal overflow */
   .sidebar, .map-wrap { overflow-x: hidden; }
   /* Card actions sem quebra */
