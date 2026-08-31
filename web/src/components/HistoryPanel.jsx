@@ -6,6 +6,7 @@ const fmtData = (s) => { try { return new Date(s).toLocaleDateString('pt-BR'); }
 export default function HistoryPanel({ onOpen, onClose }) {
   const [items, setItems] = useState(undefined); // undefined = carregando
   const [dbEnabled, setDbEnabled] = useState(true); // assume ON até confirmar
+  const [warning, setWarning] = useState(null); // mensagem pronta do back (ver server/src/db/index.js)
 
   useEffect(() => {
     let alive = true;
@@ -15,6 +16,7 @@ export default function HistoryPanel({ onOpen, onClose }) {
         if (!alive) return;
         setItems(d.searches ?? []);
         setDbEnabled(d.dbEnabled !== false); // só falso quando o back explicita
+        setWarning(d.warning ?? null);
       })
       .catch(() => alive && setItems([]));
     return () => { alive = false; };
@@ -30,19 +32,12 @@ export default function HistoryPanel({ onOpen, onClose }) {
         <div className="modal-body">
           {items === undefined && <p className="empty">Carregando…</p>}
 
-          {/* Banco DESATIVADO: explica que o histórico precisa de persistência */}
+          {/* Banco DESATIVADO: mensagem vem pronta do back (causa real: Node
+              desatualizado, driver que falhou ao abrir, etc — ver server/src/db/index.js) */}
           {items !== undefined && !dbEnabled && (
             <div className="db-warning">
               <strong>⚠️ Banco de dados desativado nesta máquina.</strong>
-              <p>
-                O histórico de buscas exige PostgreSQL. Aqui sem banco, cada busca vive só em
-                memória do servidor por <strong>30 minutos</strong> e some quando o servidor reinicia.
-                A busca atual ainda volta após o F5 (cache no navegador), mas buscas antigas se perdem.
-              </p>
-              <p className="muted">
-                Para ativar: crie <code>server/.env</code> com{' '}
-                <code>DATABASE_URL=postgresql://usuario:senha@host:5432/banco</code> e reinicie a API.
-              </p>
+              <p>{warning || 'O histórico de buscas exige persistência local. Sem banco, cada busca vive só em memória do servidor por 30 minutos e some quando o servidor reinicia.'}</p>
             </div>
           )}
 

@@ -36,6 +36,8 @@ export default function App() {
   const [filters, setFilters] = useState({ phone: false, instagram: false, email: false, showWithSite: false, showFollowUp: false });
   const toggleFilter = (k) => setFilters((f) => ({ ...f, [k]: !f[k] }));
   const [searchError, setSearchError] = useState(null); // erro inline (substitui alert)
+  const [dbWarning, setDbWarning] = useState(null); // aviso de persistência desativada (ver /api/status)
+  const [dbWarningDismissed, setDbWarningDismissed] = useState(false);
   const { theme, toggle: toggleTheme } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile: sidebar off-canvas
   const [onboardingOpen, setOnboardingOpen] = useState(() => !localStorage.getItem('captacao.msgConfig'));
@@ -57,6 +59,19 @@ export default function App() {
         localStorage.removeItem('captacao.lastSearchId');
       }
     })();
+  }, []);
+
+  // Avisa proativamente (sem precisar abrir "Buscas anteriores") quando a
+  // persistência local está desativada — dbKind === 'memory' hoje é sempre
+  // uma anomalia (Node desatualizado ou driver que falhou ao abrir o banco),
+  // não mais o padrão esperado desde que o SQLite local virou automático.
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/status')
+      .then((r) => r.json())
+      .then((d) => alive && d.dbEnabled === false && setDbWarning(d.warning ?? null))
+      .catch(() => {});
+    return () => { alive = false; };
   }, []);
 
   // Guarda a cidade da busca ativa pro template do WhatsApp ({cidade}).
@@ -212,6 +227,13 @@ export default function App() {
             </div>
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
+          {dbWarning && !dbWarningDismissed && (
+            <div className="db-warning db-warning--banner" role="alert">
+              <strong>⚠️ Persistência local desativada.</strong>
+              <p>{dbWarning}</p>
+              <button type="button" className="link-btn" onClick={() => setDbWarningDismissed(true)}>ok, entendi</button>
+            </div>
+          )}
           <SearchBar onSearch={runSearch} loading={loading} />
           {searchError && (
             <div className="search-error" role="alert">

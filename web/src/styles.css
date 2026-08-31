@@ -369,6 +369,8 @@ body {
   font-size: var(--font-sm); font-family: var(--font-mono); word-break: break-all;
 }
 .db-warning .muted { color: var(--warning-text); opacity: 0.75; }
+.db-warning--banner { margin-bottom: var(--space-3); }
+.db-warning--banner .link-btn { color: var(--warning-text); margin-top: var(--space-2); padding: 0; }
 
 /* Mensagem de erro inline (substitui o alert) */
 .search-error {
