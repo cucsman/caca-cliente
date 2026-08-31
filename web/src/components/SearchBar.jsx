@@ -4,6 +4,29 @@ import { useEffect, useRef, useState } from 'react';
 // Centro deslocado p/ o bairro Bom Jesus (leste de Porto Alegre).
 const DEFAULT_CITY = { label: 'Porto Alegre, Rio Grande do Sul', lat: -30.0427211, lng: -51.1626625 };
 
+// Lembra a última cidade escolhida/buscada (objeto completo, não só o nome)
+// pra reabrir o app já com o campo pré-preenchido em vez de sempre cair no
+// DEFAULT_CITY fixo.
+const LAST_SEARCH_CITY_KEY = 'captacao.lastSearchCity';
+
+function loadLastSearchCity() {
+  try {
+    const raw = localStorage.getItem(LAST_SEARCH_CITY_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if (c && typeof c.label === 'string' && Number.isFinite(c.lat) && Number.isFinite(c.lng)) return c;
+  } catch { /* localStorage indisponível ou dado corrompido: ignora */ }
+  return null;
+}
+
+function saveLastSearchCity(city) {
+  try {
+    if (city?.label && Number.isFinite(city.lat) && Number.isFinite(city.lng)) {
+      localStorage.setItem(LAST_SEARCH_CITY_KEY, JSON.stringify({ label: city.label, lat: city.lat, lng: city.lng }));
+    }
+  } catch { /* ignora */ }
+}
+
 // Nichos pré-definidos (atalhos rápidos para os ramos que mais prospectam negócios sem site).
 // "Outros" libera o input pra digitar livremente. Lista ordenada por bom encaixe
 // no perfil de "negócio físico sem site" + cobertura no OpenStreetMap.
@@ -38,8 +61,9 @@ export default function SearchBar({ onSearch, loading }) {
   const [niche, setNiche] = useState('salão de beleza');
   // 'preset' = um dos atalhos selecionado · 'outros' = input livre · '' = indefinido
   const [preset, setPreset] = useState('salão de beleza');
-  const [cityQuery, setCityQuery] = useState(DEFAULT_CITY.label);
-  const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
+  const initialCity = loadLastSearchCity() || DEFAULT_CITY;
+  const [cityQuery, setCityQuery] = useState(initialCity.label);
+  const [selectedCity, setSelectedCity] = useState(initialCity);
   const [suggestions, setSuggestions] = useState([]);
   const [geoLoading, setGeoLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -76,6 +100,7 @@ export default function SearchBar({ onSearch, loading }) {
     setCityQuery(s.label);
     setSuggestions([]);
     setOpen(false);
+    saveLastSearchCity(s);
   }
 
   async function submit(e) {
@@ -92,6 +117,7 @@ export default function SearchBar({ onSearch, loading }) {
         return alert('Não consegui localizar a cidade agora. Tente de novo.');
       }
     }
+    saveLastSearchCity(city);
     onSearch({ niche, city: city.label, lat: city.lat, lng: city.lng, radiusKm });
   }
 
