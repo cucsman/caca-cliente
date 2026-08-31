@@ -127,11 +127,31 @@ async function serp(query) {
   throw lastErr || new Error('DDG indisponível');
 }
 
+// Janela de texto bruto ao redor de um match no HTML (título+trecho do
+// resultado de busca ficam fisicamente perto do link/e-mail na fonte, tanto
+// no DDG quanto no Bing) — usada pra checar CIDADE, não só a URL/domínio.
+// Ver nota grande em `relevante()` sobre por que isso passou a ser exigido.
+// Ver `relevanteUrl()`/`relevanteContexto()` mais abaixo pra como isso é usado.
+// Radius assimétrico calibrado contra HTML real do Bing: o <cite> geralmente
+// vem ANTES do título/trecho do resultado (às vezes >500 chars depois, por
+// causa do markup de favicon/ícone entre eles — testado com "Mocotó" São
+// Paulo, onde a menção à cidade só aparecia ~530 chars depois do <cite>).
+// Resultados consecutivos ficam ~1700-1900 chars separados, então até ~900
+// pra frente ainda fica dentro do mesmo bloco, sem vazar pro próximo.
+const CTX_RADIUS_ANTES = 300;
+const CTX_RADIUS_DEPOIS = 900;
+function contextoDoMatch(html, index, matchLen) {
+  const ini = Math.max(0, index - CTX_RADIUS_ANTES);
+  const fim = Math.min(html.length, index + matchLen + CTX_RADIUS_DEPOIS);
+  return normalizarNome(html.slice(ini, fim).replace(/<[^>]+>/g, ' '));
+}
+
 function decodeLinks(html) {
   const links = [];
   for (const m of html.matchAll(HREF_RE)) {
     const url = unescapeHtml(m[1]);
-    if (!url.toLowerCase().includes('duckduckgo.com')) links.push(url);
+    if (url.toLowerCase().includes('duckduckgo.com')) continue;
+    links.push({ url, ctx: contextoDoMatch(html, m.index, m[0].length) });
   }
   return links;
 }
@@ -139,14 +159,7 @@ function decodeLinks(html) {
 // ── Bing HTML (fallback quando o DDG bloqueia) ───────────────────────────────
 // GET simples, sem JS, sem cadastro, sem chave — mesma filosofia do DDG.
 // Testado (ago/2026): não ficou bloqueado em nenhuma tentativa (status 200
-// sempre), diferente do DDG. LIMITAÇÃO HONESTA: pra nomes de negócio pouco
-// conhecidos (a maioria dos leads deste produto), o ranking do Bing às vezes
-// erra o alvo — ex.: "Fatima Cabelereiros" retornou resultados sobre a cidade
-// de Fátima em Portugal, "Studio Kona" sobre outro assunto qualquer — porque
-// o termo mais "forte"/indexado da frase domina a busca. Isso não introduz
-// falso positivo de rede social (o link errado raramente é instagram.com/
-// facebook.com), só reduz a taxa de "achei" pra nomes ambíguos/pouco famosos
-// — o resultado nesse caso é not_found honesto, não um dado errado.
+// sempre), diferente do DDG.
 const CITE_RE = /<cite[^>]*>(.*?)<\/cite>/gis;
 const TAG_RE = /<[^>]+>/g;
 
@@ -177,7 +190,9 @@ function decodeCitesBing(html) {
   const links = [];
   for (const m of html.matchAll(CITE_RE)) {
     const texto = decodeEntities(m[1].replace(TAG_RE, '')).replace(/\s*›\s*/g, '/').trim();
-    if (/^https?:\/\//i.test(texto)) links.push(texto);
+    if (/^https?:\/\//i.test(texto)) {
+      links.push({ url: texto, ctx: contextoDoMatch(html, m.index, m[0].length) });
+    }
   }
   return links;
 }
@@ -195,24 +210,67 @@ async function buscarComFallback(query) {
   }
 }
 
-// ── Filtro de relevância (nome do lead x URL/e-mail achado) ─────────────────
-// Necessário desde que o Bing entrou como fallback: pra nomes de negócio
-// pouco conhecidos/genéricos, o Bing às vezes retorna resultado de OUTRA
-// empresa com nome parecido (ex.: lead "Studio Factory" -> facebook de um
-// restaurante em Louisville, EUA; sem relação nenhuma). Exigimos que pelo
-// menos uma palavra significativa do nome do lead apareça na URL/domínio
-// antes de aceitar como resultado — reduz drasticamente os casos claramente
-// errados. LIMITAÇÃO HONESTA: não pega colisão com nome genérico que TAMBÉM
-// bate por substring (ex.: lead "Lush" vs a marca global Lush) — isso exigiria
-// verificar o conteúdo do perfil/cidade, fora do escopo desta camada.
+// ── Filtro de relevância (nome+cidade do lead x resultado achado) ───────────
+// QA (Faro) confirmou em teste real (31 leads, "salão de beleza" Curitiba)
+// que a versão anterior deste filtro (só nome x URL) é PIOR que não ter
+// filtro nenhum: 4/4 contatos "achados" eram falso-positivo E COM CONFIANÇA
+// (enrichmentStatus 'done') — Facebook de uma página de turismo de SP,
+// e-mail de uma imobiliária não relacionada, Instagram/Facebook de OUTRO
+// negócio homônimo em outra cidade, Instagram de uma cantora famosa — e de
+// quebra o Instagram real do lead (mesmo endereço) nem foi considerado
+// porque o primeiro "match" fraco já tinha vencido a busca. Causa raiz:
+// aceitar UMA palavra do nome batendo na URL, sem olhar cidade nenhuma, e
+// (bug à parte) e-mails de provedor genérico (gmail etc.) puladores do
+// filtro por completo — foi exatamente como "reiimobiliaria@gmail.com" foi
+// aceito pro lead "Rei dos Cosméticos".
+//
+// Fix: agora exigimos NOME na própria URL/domínio (não só citado no texto ao
+// redor — ver relevanteUrl) e, quando só 1 palavra bateu, CIDADE corroborando
+// no texto ao redor também. Pra e-mail de provedor genérico, a identidade não
+// tem URL própria, então a checagem é invertida: nome E cidade no texto ao
+// redor (ver relevanteContexto). Tokens de nome curtos (<5 letras) não contam
+// sozinhos — é sinal fraco demais pra um envio de mensagem no mundo real.
+//
+// A checagem de cidade sozinha NÃO basta quando a palavra que bateu é uma
+// categoria de negócio (não uma marca): testando contra dados reais, "Padaria
+// Bella Paulista" (São Paulo) bateu em "benjaminpadaria.com.br" — outra
+// padaria, DIFERENTE, também genuinamente em São Paulo — porque "padaria" não
+// tava na blacklist e sozinha já "bate nome" + "bate cidade" sem identificar
+// negócio nenhum específico (existem centenas de padarias em São Paulo).
+// Por isso a blacklist agora cobre também palavras de CATEGORIA de negócio
+// (padaria, restaurante, ótica, imobiliária etc.), não só palavras de estilo
+// de nome (studio/espaço/empório). Nomes formados SÓ por categoria + conector
+// (ex.: "Empório da Beleza", sem nenhuma palavra própria) ficam sem token
+// nenhum e o lead vira not_found honesto — aceitável e intencional: se nem um
+// humano conseguiria distinguir esse negócio de outro do mesmo tipo na mesma
+// cidade só pelo nome, o sistema também não deve arriscar.
 const GENERIC_TOKENS = new Set([
   'de', 'do', 'da', 'dos', 'das', 'e', '&', 'associados', 'advogados',
   'advocacia', 'studio', 'studío', 'estudio', 'estúdio', 'salao', 'salão',
   'clinica', 'clínica', 'consultorio', 'consultório', 'instituto', 'centro',
-  'espaco', 'espaço', 'ateliê', 'atelie', 'casa', 'vila', 'ltda',
+  'espaco', 'espaço', 'ateliê', 'atelie', 'casa', 'vila', 'ltda', 'eireli',
+  'mei', 'cia',
   'cabeleireiro', 'cabeleireira', 'cabeleireiros', 'barbearia', 'barbeiro',
-  'estetica', 'estética', 'beleza', 'spa', 'academia',
+  'barbeira', 'estetica', 'estética', 'beleza', 'spa', 'academia',
+  'emporio', 'empório', 'emporium', 'cosmeticos', 'cosméticos',
+  'sobrancelha', 'maquiagem', 'maquiadora', 'manicure', 'pedicure',
+  'depilacao', 'depilação',
+  'restaurante', 'pizzaria', 'lanchonete', 'cafeteria', 'padaria',
+  'confeitaria', 'doceria', 'sorveteria', 'hamburgueria', 'acai', 'açaí',
+  'hotel', 'pousada', 'mercado', 'mercearia', 'supermercado', 'drogaria',
+  'farmacia', 'farmácia', 'otica', 'ótica', 'petshop', 'pet', 'shop', 'loja',
+  'boutique', 'oficina', 'auto', 'imobiliaria', 'imobiliária', 'escritorio',
+  'escritório', 'agencia', 'agência', 'construtora', 'distribuidora',
+  'representacoes', 'representações', 'comercio', 'comércio',
 ]);
+
+// Tokens de nome com menos de 5 letras (ex.: "rei", "casa") são sinal fraco
+// demais pra usar sozinhos — foi assim que "reiimobiliaria@gmail.com" quase
+// colou pro lead "Rei dos Cosméticos" (ver nota acima).
+const MIN_TOKEN_LEN = 5;
+// Cidade é um sinal auxiliar, não o nome do negócio — mantém o limiar mais
+// baixo (nomes de cidade curtos como "Foz" ainda devem contar).
+const MIN_TOKEN_LEN_CIDADE = 3;
 
 const normalizarNome = (s) => (s || '')
   .toLowerCase()
@@ -222,50 +280,87 @@ const normalizarNome = (s) => (s || '')
 function tokensSignificativos(leadName) {
   return normalizarNome(leadName)
     .split(/\s+/)
-    .filter((t) => t && !GENERIC_TOKENS.has(t) && t.length >= 3);
+    .filter((t) => t && !GENERIC_TOKENS.has(t) && t.length >= MIN_TOKEN_LEN);
 }
 
-// alvo: URL, domínio ou e-mail já em minúsculas/sem acento — checa substring.
-function pareceRelacionado(alvo, tokens) {
-  if (!tokens.length) return false; // nome genérico demais pra validar com segurança
+// A cidade normalmente chega como "Curitiba, PR" (geocode.js) — cada palavra
+// vira um token candidato; a UF sozinha (2 letras) fica de fora por ser curta
+// demais pra bater em texto livre com segurança.
+function tokensCidade(cidade) {
+  return normalizarNome(cidade)
+    .split(/\s+/)
+    .filter((t) => t && t.length >= MIN_TOKEN_LEN_CIDADE);
+}
+
+// Pra URL/domínio (site oficial, rede social): a IDENTIDADE é a própria URL,
+// então o nome do lead precisa aparecer NELA — não basta o texto ao redor
+// mencionar o lead de passagem. Sem essa exigência, uma galeria/diretório que
+// só CITA o negócio (ex.: guiadasemana.com.br numa matéria "padarias em São
+// Paulo" que lista várias padarias, entre elas a do lead) passava como se
+// fosse o site oficial, só porque o nome aparecia no texto da matéria.
+//
+// 2+ tokens do nome batendo na própria URL é coincidência improvável o
+// bastante pra aceitar sem checar cidade (ex.: "padariabellapaulista.com.br"
+// pra "Padaria Bella Paulista" — o trecho de busca nem precisa repetir "são
+// paulo"). Com só 1 token batendo na URL, exige cidade corroborando no texto
+// ao redor — sinal fraco demais sozinho (foi assim que "emporium"/"citys"
+// colaram em negócios de OUTRA cidade nos 4 falso-positivo do Faro). Sem
+// NENHUM token na URL, rejeita sempre — o nome só aparecer no texto ao redor
+// não faz daquela URL o recurso do lead.
+function relevanteUrl(alvo, ctx, nomeTokens, cidadeTokens) {
+  if (!nomeTokens.length) return false;
   const alvoNorm = normalizarNome(alvo).replace(/\s+/g, '');
-  return tokens.some((t) => alvoNorm.includes(t));
+  const tokensNaUrl = nomeTokens.filter((t) => alvoNorm.includes(t));
+  if (tokensNaUrl.length >= 2) return true;
+  if (tokensNaUrl.length === 0 || !cidadeTokens.length) return false;
+  return cidadeTokens.some((t) => (ctx || '').includes(t));
 }
 
-function isOfficialWebsite(url, leadName) {
-  const low = url.toLowerCase();
+// Pra e-mail de provedor genérico (gmail, hotmail etc.): o ENDEREÇO em si não
+// diz nada — é comum e legítimo um negócio pequeno usar e-mail pessoal sem
+// nenhuma relação com o nome fantasia. A evidência de que aquele e-mail é
+// DESSE lead só pode vir do texto ao redor mencionar nome E cidade dele —
+// sem isso, um e-mail de outro anúncio na mesma página de resultados (achado
+// real de QA: "reiimobiliaria@gmail.com", de uma imobiliária, atribuído ao
+// lead "Rei dos Cosméticos") cola no lead errado.
+function relevanteContexto(ctx, nomeTokens, cidadeTokens) {
+  if (!nomeTokens.length || !cidadeTokens.length) return false;
+  const ctxNorm = ctx || '';
+  return nomeTokens.some((t) => ctxNorm.includes(t)) && cidadeTokens.some((t) => ctxNorm.includes(t));
+}
+
+function isOfficialWebsite({ url, ctx }, nomeTokens, cidadeTokens) {
+  const low = url.split('?')[0].toLowerCase();
   if (NON_WEBSITE_HOSTS.some((h) => low.includes(h))) return false;
 
-  let host = low.split('//')[1]?.split('/')[0]?.split('?')[0] || '';
+  let host = low.split('//')[1]?.split('/')[0] || '';
   if (host.startsWith('www.')) host = host.slice(4);
   if (!host || !host.includes('.')) return false;
 
   const hostClean = host.split('.')[0];
-  return pareceRelacionado(hostClean, tokensSignificativos(leadName));
+  return relevanteUrl(hostClean, ctx, nomeTokens, cidadeTokens);
 }
 
-function firstSocial(links, domain, bad, tokens) {
-  for (const url of links) {
+function firstSocial(links, domain, bad, nomeTokens, cidadeTokens) {
+  for (const { url, ctx } of links) {
     const low = url.toLowerCase();
-    if (low.includes(domain) && !bad.some((b) => low.includes(b)) && pareceRelacionado(url, tokens)) {
-      return url.split('?')[0].replace(/\/$/, '');
-    }
+    if (!low.includes(domain)) continue;
+    if (bad.some((b) => low.includes(b))) continue;
+    // Corta a query string antes de checar relevância: parâmetros de
+    // rastreio (utm_source=... etc.) podiam injetar texto e inflar match.
+    if (!relevanteUrl(url.split('?')[0], ctx, nomeTokens, cidadeTokens)) continue;
+    return url.split('?')[0].replace(/\/$/, '');
   }
   return null;
 }
 
-// Provedores genéricos (gmail, hotmail etc.) ficam de fora do filtro de
-// relevância: é muito comum um negócio pequeno usar e-mail pessoal sem
-// relação nenhuma com o nome fantasia, e isso é um contato válido de verdade.
-// O filtro de domínio só faz sentido pra domínio PRÓPRIO (aí sim, um domínio
-// próprio sem nenhuma palavra do nome do lead é sinal forte de empresa errada).
 const EMAIL_PROVIDERS_GENERICOS = new Set([
   'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
   'uol.com.br', 'bol.com.br', 'terra.com.br', 'icloud.com', 'live.com',
   'msn.com', 'globo.com', 'ig.com.br', 'oi.com.br', 'r7.com',
 ]);
 
-function firstEmail(html, tokens) {
+function firstEmail(html, nomeTokens, cidadeTokens) {
   if (!html) return null;
   const seen = new Set();
   for (const m of html.matchAll(EMAIL_RE)) {
@@ -276,7 +371,14 @@ function firstEmail(html, tokens) {
     if (seen.has(low)) continue;
     seen.add(low);
     const dominio = low.split('@')[1] ?? '';
-    if (!EMAIL_PROVIDERS_GENERICOS.has(dominio) && !pareceRelacionado(dominio, tokens)) continue;
+    const ctx = contextoDoMatch(html, m.index, m[0].length);
+    // Domínio próprio (não gmail/hotmail/etc.): mesma lógica de URL — exige
+    // nome do lead no domínio. Provedor genérico: exige nome+cidade no texto
+    // ao redor (ver relevanteContexto).
+    const ok = EMAIL_PROVIDERS_GENERICOS.has(dominio)
+      ? relevanteContexto(ctx, nomeTokens, cidadeTokens)
+      : relevanteUrl(dominio, ctx, nomeTokens, cidadeTokens);
+    if (!ok) continue;
     return email;
   }
   return null;
@@ -299,19 +401,20 @@ export async function enrichLead(input) {
     // ── 1ª SERP (DDG, fallback Bing) ────────────────────────────────────
     const { html, links } = await buscarComFallback(`"${name}" ${city}`);
     const tokens = tokensSignificativos(name);
+    const cidadeTokens = tokensCidade(city);
 
-    // Redes sociais (com bad-filters iguais ao Python + filtro de relevância)
-    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts'], tokens);
-    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups'], tokens);
-    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/'], tokens);
+    // Redes sociais (com bad-filters iguais ao Python + filtro de relevância nome+cidade)
+    out.instagram = firstSocial(links, 'instagram.com', ['/p/', '/reel/', '/explore', '/accounts'], tokens, cidadeTokens);
+    out.facebook = firstSocial(links, 'facebook.com', ['/sharer', '/tr?', '/events', '/groups'], tokens, cidadeTokens);
+    out.linkedin = firstSocial(links, 'linkedin.com', ['/posts/', '/feed/'], tokens, cidadeTokens);
 
     // E-mail
-    out.email = firstEmail(html, tokens);
+    out.email = firstEmail(html, tokens, cidadeTokens);
 
     // Website oficial (1º que casar)
-    for (const url of links) {
-      if (isOfficialWebsite(url, name)) {
-        out.discoveredWebsite = url.split('?')[0].replace(/\/$/, '');
+    for (const item of links) {
+      if (isOfficialWebsite(item, tokens, cidadeTokens)) {
+        out.discoveredWebsite = item.url.split('?')[0].replace(/\/$/, '');
         break;
       }
     }
@@ -320,7 +423,7 @@ export async function enrichLead(input) {
     if (!out.email && budgetOk()) {
       try {
         const { html: html2 } = await buscarComFallback(`"${name}" ${city} email contato`);
-        out.email = firstEmail(html2, tokens);
+        out.email = firstEmail(html2, tokens, cidadeTokens);
       } catch {
         // Falha na 2ª (DDG e Bing) não quebra o resultado parcial
       }
@@ -328,12 +431,12 @@ export async function enrichLead(input) {
 
     // ── Link quebrado ─────────────────────────────────────────────────
     if (budgetOk()) {
-      const linktreeUrl = links.find((url) =>
+      const linktreeItem = links.find(({ url }) =>
         LINKTREE_DOMAINS.some((d) => url.toLowerCase().includes(d))
       );
-      if (linktreeUrl) {
+      if (linktreeItem) {
         try {
-          const r = await fetch(linktreeUrl, {
+          const r = await fetch(linktreeItem.url, {
             method: 'GET',
             headers: { 'User-Agent': UA },
             signal: AbortSignal.timeout(3000),
