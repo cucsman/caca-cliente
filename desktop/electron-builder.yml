@@ -15,6 +15,11 @@ nodeGypRebuild: false
 directories:
   buildResources: build
 
+# Reassina ad-hoc o .app no macOS depois do empacotamento — sem isso o bundle
+# sai com assinatura corrompida e o Gatekeeper acusa "app está danificado" em
+# vez do aviso normal de app não identificado. Ver comentário em build/afterPack.cjs.
+afterPack: build/afterPack.cjs
+
 # Sem asar: arquivos reais no disco — imports ESM do server e express.static
 # funcionam sem nenhum caso especial. Custo de startup é irrelevante aqui.
 asar: false
