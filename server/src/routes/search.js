@@ -4,7 +4,7 @@ import { gerarEstabelecimentos } from '../data/mockPlaces.js';
 import { geocodeCidade } from '../data/geocode.js';
 import { createSearch, attachStream, prioritizeLead, getSearchLeads, updateLead, reopenSearch } from '../enrichment/enricher.js';
 import { toCSV, toXLSX } from '../export/exporter.js';
-import { listSearches, statsConversao, dbEnabled, dbKind } from '../db.js';
+import { listSearches, statsConversao, dbEnabled, dbKind, dbWarning } from '../db.js';
 import { scoreLead } from '../utils/score.js';
 
 const router = Router();
@@ -145,12 +145,14 @@ router.post('/api/search/:searchId/webhook', async (req, res) => {
 
 // Histórico de buscas persistidas (lista vazia se o banco estiver desligado).
 // dbEnabled vai junto pra o front distinguir "banco off" de "banco on sem buscas".
+// warning traz uma mensagem pronta pra exibir quando dbEnabled === false —
+// nunca falha silenciosa (ver server/src/db/index.js).
 router.get('/api/searches', async (_req, res) => {
-  res.json({ dbEnabled, searches: await listSearches() });
+  res.json({ dbEnabled, warning: dbWarning, searches: await listSearches() });
 });
 
 // Diz se a persistência está ativa e qual driver (postgres/sqlite/memory).
-router.get('/api/status', (_req, res) => res.json({ dbEnabled, dbKind, version: process.env.APP_VERSION ?? null }));
+router.get('/api/status', (_req, res) => res.json({ dbEnabled, dbKind, warning: dbWarning, version: process.env.APP_VERSION ?? null }));
 
 // Estatísticas de conversão para o dashboard (null se o banco estiver desligado).
 router.get('/api/stats', async (_req, res) => {
