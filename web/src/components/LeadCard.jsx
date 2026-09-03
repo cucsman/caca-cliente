@@ -40,6 +40,18 @@ export default function LeadCard({ lead, selected, onSelect, onOpenDetails, getM
           🎯 Alvo ideal
         </span>
       )}
+      {lead.source === 'cnpj' && (
+        <span
+          className="badge-cnpj"
+          title={
+            lead.hasWebsite == null
+              ? 'Dado vem da Receita Federal (CNPJ), não do Google/OSM: endereço pode estar desatualizado, e ainda não sabemos se esse negócio já tem site — o enriquecimento vai tentar confirmar.'
+              : 'Dado vem da Receita Federal (CNPJ), não do Google/OSM: endereço pode estar desatualizado.'
+          }
+        >
+          🏛️ via CNPJ · endereço pode estar desatualizado
+        </span>
+      )}
       {lead.rating != null && (
         <p className="muted">⭐ {lead.rating} ({lead.reviewsCount} avaliações)</p>
       )}

@@ -471,6 +471,7 @@ body {
 .kanban-card--dragging { opacity: 0.5; transform: scale(0.98) rotate(1deg); box-shadow: var(--shadow-md); }
 .kanban-check { position: absolute; top: 7px; right: 7px; width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
 .kanban-card strong { display: block; padding-right: 22px; }
+.kanban-cnpj-tag { margin-left: 4px; cursor: help; font-size: 11px; }
 .kanban-card:active { cursor: grabbing; }
 .kanban-card--sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
 .kanban-card strong { font-size: 13.5px; }
@@ -572,6 +573,15 @@ body {
 .badge-alvo {
   display: inline-block; margin-top: var(--space-2); font-size: var(--font-xs); font-weight: 600;
   color: var(--success-strong); background: var(--success-soft); border: 1px solid var(--success);
+  padding: 2px 8px; border-radius: var(--radius-pill);
+}
+
+/* ── Badge de origem CNPJ (fallback da Receita quando o OSM não cobre a
+   região/nicho) — neutro de propósito, não é aviso nem elogio, só avisa
+   que o dado é menos verificado que o OSM. Sem badge no caso comum (OSM). ── */
+.badge-cnpj {
+  display: inline-block; margin-top: var(--space-2); font-size: var(--font-xs); font-weight: 600;
+  color: var(--text-muted); background: var(--bg-muted); border: 1px solid var(--border-strong);
   padding: 2px 8px; border-radius: var(--radius-pill);
 }
 

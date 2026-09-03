@@ -126,7 +126,17 @@ export default function KanbanBoard({ leads, selectedId, onSelect, onMove, onDis
                         onChange={() => toggleChoose(l.id)}
                       />
                     )}
-                    <strong>{l.name}</strong>
+                    <strong>
+                      {l.name}
+                      {l.source === 'cnpj' && (
+                        <span
+                          className="kanban-cnpj-tag"
+                          title={`Dado vem da Receita Federal (CNPJ), não do OSM — endereço pode estar desatualizado${l.hasWebsite == null ? ', e não sabemos se já tem site' : ''}.`}
+                        >
+                          🏛️
+                        </span>
+                      )}
+                    </strong>
                     <span className="score-bar" title={`Score ${score}/100`}>
                       <span className={`score score--${tier.key}`}>{tier.label}</span>
                       <span className="score-bar-track">
