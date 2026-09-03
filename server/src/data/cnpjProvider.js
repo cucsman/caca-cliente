@@ -82,9 +82,16 @@ function openReadOnly(uf) {
   if (cached) return cached;
   const p = dbPathFor(uf);
   if (!existsSync(p)) return null;
-  const db = new DatabaseSync(p, { readOnly: true });
-  openDbs.set(uf, db);
-  return db;
+  try {
+    const db = new DatabaseSync(p, { readOnly: true });
+    openDbs.set(uf, db);
+    return db;
+  } catch (e) {
+    // node:sqlite é EXPERIMENTAL — banco corrompido/parcialmente escrito não
+    // pode derrubar a busca inteira. Nunca cacheia um handle que falhou.
+    console.error(`[cnpj] falha ao abrir ${uf}.db (seguindo sem CNPJ):`, e.message);
+    return null;
+  }
 }
 
 export async function buscarEstabelecimentos({ niche, city, lat, lng, radiusKm, uf }) {
@@ -100,18 +107,28 @@ export async function buscarEstabelecimentos({ niche, city, lat, lng, radiusKm, 
   const cnaes = resolveCnaes(niche);
   if (!cnaes.length) return { found: 0, leads: [], status: 'ready' };
 
-  const placeholders = cnaes.map(() => '?').join(',');
-  // Filtra por cnae no SQL (usa idx_cnae_municipio) e por município em JS:
-  // o texto de `municipio` na base processada pode divergir em acentuação
-  // ou caixa do nome devolvido pelo Nominatim (geocodeCidade) — comparar
-  // normalizado evita depender de convenção exata do ETL nesse campo. `city`
-  // chega como "Cidade, Estado" (label montado em geocodeCidade/toLabel) —
-  // pega só a parte antes da vírgula, senão nunca bate com `municipio`
-  // (que só tem o nome da cidade).
-  const rows = db.prepare(`SELECT * FROM estabelecimentos WHERE cnae IN (${placeholders})`).all(...cnaes);
-  const cityNorm = normalize(String(city ?? '').split(',')[0]);
-  const matched = rows.filter((r) => normalize(r.municipio) === cityNorm).slice(0, 150);
+  try {
+    const placeholders = cnaes.map(() => '?').join(',');
+    // Filtra por cnae no SQL (usa idx_cnae_municipio) e por município em JS:
+    // o texto de `municipio` na base processada pode divergir em acentuação
+    // ou caixa do nome devolvido pelo Nominatim (geocodeCidade) — comparar
+    // normalizado evita depender de convenção exata do ETL nesse campo. `city`
+    // chega como "Cidade, Estado" (label montado em geocodeCidade/toLabel) —
+    // pega só a parte antes da vírgula, senão nunca bate com `municipio`
+    // (que só tem o nome da cidade).
+    const rows = db.prepare(`SELECT * FROM estabelecimentos WHERE cnae IN (${placeholders})`).all(...cnaes);
+    const cityNorm = normalize(String(city ?? '').split(',')[0]);
+    const matched = rows.filter((r) => normalize(r.municipio) === cityNorm).slice(0, 150);
 
-  const leads = matched.map((r) => mapRow(r, niche));
-  return { found: leads.length, leads, status: 'ready' };
+    const leads = matched.map((r) => mapRow(r, niche));
+    return { found: leads.length, leads, status: 'ready' };
+  } catch (e) {
+    // Erro na CONSULTA (não na abertura) — ex: banco corrompido no meio da
+    // leitura, schema inesperado. Descarta o handle cacheado pra próxima
+    // chamada tentar reabrir do zero, em vez de repetir o mesmo erro sempre.
+    console.error(`[cnpj] consulta em ${ufU}.db falhou (seguindo sem CNPJ):`, e.message);
+    openDbs.delete(ufU);
+    try { db.close(); } catch {}
+    return { found: 0, leads: [], status: 'unavailable' };
+  }
 }
