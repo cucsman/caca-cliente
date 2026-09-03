@@ -8,6 +8,8 @@
 
 import https from 'node:https';
 import { withRetry, RetryError, isTransientHttpError } from '../utils/retry.js';
+import { normalize } from '../utils/text.js';
+import { NICHE_GROUPS } from './nicheGroups.js';
 
 const ENDPOINTS = [
   // Mirrors públicos do Overpass — se o primeiro estiver enfileirado/lento,
@@ -19,36 +21,6 @@ const ENDPOINTS = [
 ];
 // Etiqueta do OSM: identifique a aplicação e um contato.
 const UA = 'CacaCliente/0.1 (prospeccao de negocios sem site; curso Sites com IA do Zero)';
-
-// Mapa nicho (PT-BR) -> tags OSM. `kw` são radicais SEM acento (casamos por
-// substring contra o nicho normalizado). Vários grupos podem casar e somar tags.
-const NICHE_GROUPS = [
-  { kw: ['estetic', 'beleza', 'salao', 'manicure', 'depila', 'sobrancelha', 'cabelei', 'barbear', 'barbeiro', 'spa', 'maquia', 'unha'], tags: ['shop=beauty', 'shop=hairdresser', 'shop=massage', 'leisure=spa', 'shop=cosmetics'] },
-  { kw: ['advog', 'advocacia', 'jurid'], tags: ['office=lawyer'] },
-  { kw: ['nutri'], tags: ['healthcare=nutrition', 'amenity=doctors'] },
-  { kw: ['dent', 'odonto'], tags: ['amenity=dentist', 'healthcare=dentist'] },
-  { kw: ['clinic', 'consultor', 'medic', 'saude'], tags: ['amenity=clinic', 'healthcare=clinic', 'amenity=doctors'] },
-  { kw: ['academia', 'fitness', 'crossfit', 'pilates', 'muscula'], tags: ['leisure=fitness_centre', 'leisure=sports_centre'] },
-  { kw: ['restaurante', 'lanchonete', 'pizz', 'hamburg', 'cafe', 'bistro', 'padaria', 'comida'], tags: ['amenity=restaurant', 'amenity=fast_food', 'amenity=cafe', 'shop=bakery'] },
-  { kw: ['pet', 'veterin'], tags: ['amenity=veterinary', 'shop=pet'] },
-  { kw: ['contab', 'contador'], tags: ['office=accountant'] },
-  { kw: ['imobili', 'corretor', 'imovel'], tags: ['office=estate_agent'] },
-  { kw: ['arquitet'], tags: ['office=architect'] },
-  { kw: ['psicol', 'terapeut', 'terapia'], tags: ['healthcare=psychotherapist', 'office=therapist'] },
-  { kw: ['fisio'], tags: ['healthcare=physiotherapist'] },
-  { kw: ['otica', 'oculos'], tags: ['shop=optician'] },
-  { kw: ['mecanic', 'funilaria', 'oficina', 'autocenter'], tags: ['shop=car_repair', 'craft=car_repair'] },
-  // Construção civil: empreiteiras, construtoras, reformas. Cobre vários
-  // crafts comuns no OSM brasileiro (pedreiros, eletricistas, marceneiros…).
-  { kw: ['empreit', 'construt', 'reform', 'pedreir', 'engenh'], tags: [
-      'office=construction_company', 'craft=builder', 'craft=carpenter',
-      'craft=electrician', 'craft=plumber', 'craft=painter',
-      'craft=tiler', 'craft=roofer', 'shop=trade',
-  ] },
-  { kw: ['floricult', 'flor'], tags: ['shop=florist'] },
-];
-
-const normalize = (s) => (s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
 function resolveTags(niche) {
   const n = normalize(niche);
