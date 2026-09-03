@@ -172,6 +172,14 @@ export default function App() {
                 // Fallback de endereço (Nominatim) chega best-effort, bem depois do
                 // resto — só reaplica quando o evento realmente traz um endereço novo.
                 ...(evt.addressSource === 'nominatim' ? { address: evt.address, addressSource: evt.addressSource } : {}),
+                // Leads do fallback CNPJ (latMissing) resolvem a coordenada real em
+                // paralelo (geocodeEndereco assíncrono) — sem isso o pino ficava
+                // preso pra sempre no centro da cidade (posição aproximada).
+                ...(evt.latSource === 'nominatim' ? { lat: evt.lat, lng: evt.lng, latSource: evt.latSource, latMissing: false } : {}),
+                // O back recalcula o score a cada evento (telefone/instagram/email
+                // achados mudam a pontuação) — sem isso o card ficava com o score
+                // congelado na estimativa da Fase 1 pro resto da busca.
+                ...(typeof evt.score === 'number' ? { score: evt.score } : {}),
               }
             : l
         )
