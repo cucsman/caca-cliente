@@ -39,6 +39,11 @@ export default function App() {
   const [searchError, setSearchError] = useState(null); // erro inline (substitui alert)
   const [patchError, setPatchError] = useState(null); // PATCH falhou no back (ex: DB fora do ar) — a mudança otimista não foi salva
   const [dbWarning, setDbWarning] = useState(null); // aviso de persistência desativada (ver /api/status)
+  // Fallback de CNPJ (Receita Federal): quando o OSM não cobre o nicho/região,
+  // o back dispara o download do banco daquela UF em background e responde
+  // {cnpjStatus:'downloading'} na hora, sem os leads de CNPJ ainda. Guardamos
+  // os params da busca original pra poder re-disparar sozinho quando ficar pronto.
+  const [cnpjBanner, setCnpjBanner] = useState(null); // { uf, params, progressPct }
   const [dbWarningDismissed, setDbWarningDismissed] = useState(false);
   const { theme, toggle: toggleTheme } = useTheme();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile: sidebar off-canvas
@@ -108,12 +113,50 @@ export default function App() {
       setSearch(data);
       setLeads(data.leads);
       localStorage.setItem('captacao.lastSearchId', data.searchId);
+      // OSM não achou o suficiente e o back já disparou o download da UF em
+      // background: segue mostrando os leads do OSM (podem ser 0) e guarda os
+      // params originais pra re-buscar sozinho quando o banco ficar pronto.
+      setCnpjBanner(data.cnpjStatus === 'downloading' && data.cnpjUf ? { uf: data.cnpjUf, params } : null);
     } catch (e) {
       setSearchError(e.message);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Poll em /api/cnpj/status/:uf enquanto o banco daquela UF ainda está
+  // baixando — re-dispara a busca original sozinho assim que ficar pronto.
+  useEffect(() => {
+    if (!cnpjBanner) return;
+    let alive = true;
+    let timer;
+    async function poll() {
+      try {
+        const r = await fetch(`/api/cnpj/status/${encodeURIComponent(cnpjBanner.uf)}`);
+        const d = await r.json();
+        if (!alive) return;
+        if (d.status === 'ready') {
+          setCnpjBanner(null);
+          runSearch(cnpjBanner.params); // mesma busca de antes, agora com CNPJ disponível
+          return;
+        }
+        if (d.status !== 'downloading') {
+          setCnpjBanner(null); // 'unavailable' ou erro: desiste em silêncio, sem travar a UX
+          return;
+        }
+        setCnpjBanner((b) => (b ? { ...b, progressPct: d.progressPct } : b));
+      } catch {
+        // rede falhou nessa tentativa — tenta de novo no próximo tick, sem alarmar o usuário
+      }
+      if (alive) timer = setTimeout(poll, 4000);
+    }
+    timer = setTimeout(poll, 4000);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cnpjBanner?.uf]);
 
   // FASE 2 — eventos SSE atualizam cards e pinos conforme chegam
   useEnrichmentStream(
@@ -291,6 +334,17 @@ export default function App() {
             <div className="search-error" role="alert">
               <strong>⚠️ {patchError}</strong>
               <button type="button" onClick={() => setPatchError(null)} aria-label="fechar">✕</button>
+            </div>
+          )}
+          {cnpjBanner && (
+            <div className="db-warning db-warning--banner" role="status">
+              <strong>⏳ Baixando dados de {cnpjBanner.uf}…</strong>
+              <p>
+                Esse nicho tem pouca cobertura no OpenStreetMap por aqui — buscando também na base
+                de CNPJ da Receita Federal. Só na primeira vez, pode levar alguns minutos
+                {cnpjBanner.progressPct != null ? ` (${cnpjBanner.progressPct}%)` : ''}. A busca
+                completa sozinha assim que terminar.
+              </p>
             </div>
           )}
           <div className="view-toggle">
