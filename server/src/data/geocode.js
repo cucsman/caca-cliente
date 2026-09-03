@@ -6,10 +6,10 @@
 //   - nada de autocomplete por tecla  (o front faz debounce de 450ms)
 import https from 'node:https';
 import { withRetry, isTransientHttpError } from '../utils/retry.js';
+import { normalize } from '../utils/text.js';
 
 const UA = 'CacaCliente/0.1 (prospeccao de negocios sem site; curso Sites com IA do Zero)';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const normalize = (s) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
 
 // ── Limitador: serializa as chamadas ao Nominatim com >= 1.1s entre elas ──
 let lastCall = 0;
@@ -76,6 +76,24 @@ function toLabel(item) {
   const place = a.city || a.town || a.village || a.municipality || a.county || item.name || (item.display_name ?? '').split(',')[0];
   const state = a.state || a.region;
   return [place, state].filter(Boolean).join(', ') || item.display_name;
+}
+
+// Nome do estado (como o Nominatim devolve em address.state, ex: "Paraná")
+// -> sigla de 2 letras. Usado pra resolver a UF da busca (fallback CNPJ
+// precisa saber em qual estado baixar/consultar a base).
+const UF_POR_ESTADO = {
+  acre: 'AC', alagoas: 'AL', amapa: 'AP', amazonas: 'AM', bahia: 'BA',
+  ceara: 'CE', 'distrito federal': 'DF', 'espirito santo': 'ES', goias: 'GO',
+  maranhao: 'MA', 'mato grosso': 'MT', 'mato grosso do sul': 'MS',
+  'minas gerais': 'MG', para: 'PA', paraiba: 'PB', parana: 'PR',
+  pernambuco: 'PE', piaui: 'PI', 'rio de janeiro': 'RJ',
+  'rio grande do norte': 'RN', 'rio grande do sul': 'RS', rondonia: 'RO',
+  roraima: 'RR', 'santa catarina': 'SC', 'sao paulo': 'SP', sergipe: 'SE',
+  tocantins: 'TO',
+};
+
+function ufDoEstado(nomeEstado) {
+  return UF_POR_ESTADO[normalize(nomeEstado)] ?? null;
 }
 
 function nominatimReverseGet(lat, lng) {
@@ -178,9 +196,37 @@ export async function geocodeCidade(q) {
     const label = toLabel(item);
     if (seen.has(label)) continue;
     seen.add(label);
-    results.push({ label, lat: +item.lat, lng: +item.lon });
+    const a = item.address ?? {};
+    results.push({ label, lat: +item.lat, lng: +item.lon, uf: ufDoEstado(a.state || a.region) });
     if (results.length >= 5) break;
   }
   cache.set(key, { ts: Date.now(), results });
   return results;
+}
+
+// ── Forward geocoding de um endereço específico (não uma cidade) ───────────
+// Usado pelo fallback CNPJ: leads vindos da base da Receita têm endereço
+// textual (logradouro/número/bairro/município/UF) mas nenhuma coordenada —
+// diferente do OSM, que já vem com lat/lng do próprio elemento. Reaproveita
+// nominatimGet() (mesmo endpoint /search já usado por geocodeCidade) e o
+// limitador/cache já existentes; só pega o primeiro resultado (mais
+// relevante) em vez de montar uma lista de opções pro usuário escolher.
+const enderecoCache = new Map();
+export async function geocodeEndereco(enderecoCompleto) {
+  const key = normalize(enderecoCompleto);
+  const hit = enderecoCache.get(key);
+  if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.coords;
+
+  const raw = await rateLimited(() =>
+    withRetry(() => nominatimGet(enderecoCompleto), {
+      label: 'Nominatim (forward endereço)',
+      retries: 2,
+      baseMs: 1200,
+      shouldRetry: isTransientHttpError,
+    })
+  );
+  const first = raw[0];
+  const coords = first ? { lat: +first.lat, lng: +first.lon } : null;
+  enderecoCache.set(key, { ts: Date.now(), coords });
+  return coords;
 }
