@@ -2,11 +2,14 @@ import { Router } from 'express';
 import { buscarEstabelecimentos } from '../data/osmProvider.js';
 import { gerarEstabelecimentos } from '../data/mockPlaces.js';
 import { geocodeCidade } from '../data/geocode.js';
+import * as cnpjProvider from '../data/cnpjProvider.js';
+import { getStatus as getCnpjStatus } from '../data/cnpjDownload.js';
 import { createSearch, attachStream, prioritizeLead, getSearchLeads, updateLead, reopenSearch } from '../enrichment/enricher.js';
 import { toCSV, toXLSX } from '../export/exporter.js';
 import { listSearches, statsConversao, dbEnabled, dbKind, dbWarning } from '../db.js';
 import { scoreLead } from '../utils/score.js';
 import { assertPublicUrl } from '../utils/ssrf.js';
+import { normalize } from '../utils/text.js';
 
 const router = Router();
 const slug = (s) =>
@@ -19,9 +22,34 @@ const slug = (s) =>
 const USE_MOCK = process.env.DATA_PROVIDER === 'mock'; // demo offline sem rede
 const clamp = (n, lo, hi) => Math.min(Math.max(Number(n) || lo, lo), hi);
 
+// ─── Fallback CNPJ: acionado só quando o OSM não achou nada (threshold
+// conservador pra começar, ver plano) e a UF foi resolvida no front. Dedup é
+// DENTRO desta busca (função pura, em memória) — não confundir com
+// findDupLeads do db, que compara contra buscas ANTERIORES já persistidas.
+const CNPJ_FALLBACK_THRESHOLD = 0;
+const SUFIXO_SOCIETARIO = /\b(LTDA|ME|EIRELI|EPP|S\/?A|S\.A\.?)\b\.?/gi;
+const normalizeNome = (s) =>
+  normalize(s)
+    .toUpperCase()
+    .replace(SUFIXO_SOCIETARIO, '')
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+// Mantém o lead do OSM em caso de empate (já vem com lat/lng reais, o CNPJ não).
+function dedupContraOsm(osmLeads, cnpjLeads) {
+  const vistos = new Set(osmLeads.map((l) => normalizeNome(l.name)));
+  return cnpjLeads.filter((l) => {
+    const key = normalizeNome(l.name);
+    if (!key || vistos.has(key)) return false;
+    vistos.add(key);
+    return true;
+  });
+}
+
 // ─── FASE 1 — síncrona: pinos no mapa em ~1–2s ──────────────────────────────
 router.post('/api/search', async (req, res) => {
-  const { niche, city = 'São Paulo', lat = -23.5505, lng = -46.6333, radiusKm = 5 } = req.body ?? {};
+  const { niche, city = 'São Paulo', lat = -23.5505, lng = -46.6333, radiusKm = 5, uf } = req.body ?? {};
   if (!niche?.trim()) {
     return res.status(400).json({ error: 'Informe o nicho (ex: "salão de estética").' });
   }
@@ -39,11 +67,33 @@ router.post('/api/search', async (req, res) => {
       ({ found, leads } = await buscarEstabelecimentos(params));
     }
 
+    // Fallback CNPJ: só quando o OSM não achou nada e a UF foi resolvida no
+    // front (SearchBar → geocodeCidade). Se a UF não vier por qualquer
+    // motivo, degrada silenciosamente — nunca trava nem falha a busca por
+    // causa disso (ver plano, seção 5).
+    let cnpjStatus, cnpjUf;
+    const ufNormalizada = typeof uf === 'string' ? uf.trim().toUpperCase() : '';
+    if (!USE_MOCK && found <= CNPJ_FALLBACK_THRESHOLD && /^[A-Z]{2}$/.test(ufNormalizada)) {
+      try {
+        const cnpjResult = await cnpjProvider.buscarEstabelecimentos({ ...params, uf: ufNormalizada });
+        cnpjStatus = cnpjResult.status;
+        cnpjUf = ufNormalizada;
+        if (cnpjResult.status === 'ready' && cnpjResult.leads.length) {
+          const novos = dedupContraOsm(leads, cnpjResult.leads);
+          leads = [...leads, ...novos];
+          found += novos.length;
+        }
+      } catch (e) {
+        console.error('[cnpj] fallback falhou (seguindo só com OSM):', e.message);
+      }
+    }
+
     const searchId = createSearch(leads, { city, niche: params.niche, lat: params.lat, lng: params.lng, radiusKm: params.radiusKm, found });
     res.json({
       searchId,
       query: params,
       stats: { found, withoutWebsite: leads.length },
+      ...(cnpjStatus ? { cnpjStatus, cnpjUf } : {}),
       leads: leads.map((l) => ({
         ...l,
         enrichmentStatus: 'pending',
@@ -159,6 +209,14 @@ router.get('/api/searches', async (_req, res) => {
 
 // Diz se a persistência está ativa e qual driver (postgres/sqlite/memory).
 router.get('/api/status', (_req, res) => res.json({ dbEnabled, dbKind, warning: dbWarning, version: process.env.APP_VERSION ?? null }));
+
+// Progresso do download do cache CNPJ de uma UF — front faz polling curto
+// enquanto `downloading` e re-dispara a busca quando virar `ready`.
+router.get('/api/cnpj/status/:uf', (req, res) => {
+  const uf = (req.params.uf ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(uf)) return res.status(400).json({ error: 'UF inválida (use a sigla de 2 letras, ex: PR).' });
+  res.json(getCnpjStatus(uf));
+});
 
 // Estatísticas de conversão para o dashboard (null se o banco estiver desligado).
 router.get('/api/stats', async (_req, res) => {
