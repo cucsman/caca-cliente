@@ -5,6 +5,14 @@ __pycache__/
 .venv/
 .DS_Store
 
+# ETL CNPJ: gerado a partir de server/src/data/nicheGroups.js (ver
+# scripts/etl-cnpj/exportar_cnaes.mjs) — não versionar pra não divergir do original.
+scripts/etl-cnpj/cnaes.json
+scripts/etl-cnpj/dados-brutos/
+scripts/etl-cnpj/saida/
+scripts/etl-cnpj/testes/amostra/
+scripts/etl-cnpj/testes/saida_teste/
+
 # Electron (desktop/)
 desktop/node_modules/
 desktop/dist/
