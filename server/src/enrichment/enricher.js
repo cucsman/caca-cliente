@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import * as db from '../db.js';
 import { scoreLead } from '../utils/score.js';
 import { enrichLead } from './enrichWorker.js';
-import { reverseGeocodeEndereco } from '../data/geocode.js';
+import { reverseGeocodeEndereco, geocodeEndereco } from '../data/geocode.js';
 
 // Gerencia as sessões SSE E executa o enriquecimento real (enrichWorker.js —
 // DuckDuckGo, gratuito). Uma fila com concorrência limitada mantém o ritmo
@@ -242,6 +242,25 @@ async function runOne(session, lead) {
     }).catch(() => {});
   }
 
+  // Irmão do bloco acima, mas pro sentido inverso: leads do fallback CNPJ
+  // (cnpjProvider.js) têm endereço textual completo mas NENHUMA coordenada
+  // nativa (a base da Receita não traz lat/lng) — saíram da Fase 1 com
+  // `latMissing: true` e o centro da cidade buscada, só pro pino não sumir
+  // do mapa. Resolve de verdade em paralelo, sem travar a fila do DDG (mesmo
+  // motivo do bloco de reverse geocoding: Nominatim é 1 req/seg compartilhado
+  // entre TODOS os leads da busca, bem mais lento que o enriquecimento).
+  if (!USE_MOCK && lead.latMissing && (lead.geocodeQuery || lead.address)) {
+    geocodeEndereco(lead.geocodeQuery || lead.address).then((coords) => {
+      if (!coords) return;
+      lead.lat = coords.lat;
+      lead.lng = coords.lng;
+      lead.latMissing = false;
+      lead.latSource = 'nominatim';
+      broadcast(session, 'enrichment', payloadOf(lead));
+      if (db.dbEnabled) session.dbReady.then(() => db.saveEnrichment(session.id, lead)).catch(() => {});
+    }).catch(() => {});
+  }
+
   const enrichment = USE_MOCK ? mockEnrichment(lead) : await enrichLead({ name: lead.name, city: session.city, phone: lead.phone });
 
   lead.enrichment = enrichment;
@@ -262,6 +281,7 @@ const payloadOf = (lead) => ({
   status: lead.enrichmentStatus,
   enrichment: lead.enrichment,
   ...(lead.addressSource === 'nominatim' ? { address: lead.address, addressSource: lead.addressSource } : {}),
+  ...(lead.latSource === 'nominatim' ? { lat: lead.lat, lng: lead.lng, latSource: lead.latSource } : {}),
   score: scoreLead(lead, lead.enrichment),
 });
 const allSettled = (s) => [...s.leads.values()].every((l) => l.enrichmentStatus !== 'pending');
