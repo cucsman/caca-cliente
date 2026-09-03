@@ -22,7 +22,7 @@ function loadLastSearchCity() {
 function saveLastSearchCity(city) {
   try {
     if (city?.label && Number.isFinite(city.lat) && Number.isFinite(city.lng)) {
-      localStorage.setItem(LAST_SEARCH_CITY_KEY, JSON.stringify({ label: city.label, lat: city.lat, lng: city.lng }));
+      localStorage.setItem(LAST_SEARCH_CITY_KEY, JSON.stringify({ label: city.label, lat: city.lat, lng: city.lng, uf: city.uf }));
     }
   } catch { /* ignora */ }
 }
@@ -106,9 +106,9 @@ export default function SearchBar({ onSearch, loading, activeSearchId, activeQue
     setPreset(isPreset ? activeQuery.niche : 'outros');
     setNiche(activeQuery.niche ?? '');
     setCityQuery(activeQuery.city ?? '');
-    setSelectedCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng });
+    setSelectedCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng, uf: activeQuery.uf });
     if (activeQuery.radiusKm) setRadiusKm(activeQuery.radiusKm);
-    saveLastSearchCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng });
+    saveLastSearchCity({ label: activeQuery.city, lat: activeQuery.lat, lng: activeQuery.lng, uf: activeQuery.uf });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSearchId]);
 
@@ -135,7 +135,9 @@ export default function SearchBar({ onSearch, loading, activeSearchId, activeQue
       }
     }
     saveLastSearchCity(city);
-    onSearch({ niche, city: city.label, lat: city.lat, lng: city.lng, radiusKm });
+    // uf vem do geocode (2 letras) — opcional: alimenta o fallback de CNPJ no
+    // back quando o OSM não tem cobertura. Ausente = back degrada sem CNPJ.
+    onSearch({ niche, city: city.label, lat: city.lat, lng: city.lng, radiusKm, uf: city.uf });
   }
 
   function chooseNiche(v) {
