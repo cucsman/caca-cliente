@@ -92,7 +92,11 @@ const UF_POR_ESTADO = {
   tocantins: 'TO',
 };
 
-function ufDoEstado(nomeEstado) {
+// Exportada: search.js reaproveita como fallback pra resolver a UF a partir
+// do nome do estado quando o front não manda `uf` explicitamente. Validar
+// contra essa lista fechada (em vez de um regex tipo /[A-Za-z]{2}$/) evita
+// aceitar lixo como UF válida e disparar download desnecessário do cache CNPJ.
+export function ufDoEstado(nomeEstado) {
   return UF_POR_ESTADO[normalize(nomeEstado)] ?? null;
 }
 

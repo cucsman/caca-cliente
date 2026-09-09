@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { buscarEstabelecimentos } from '../data/osmProvider.js';
 import { gerarEstabelecimentos } from '../data/mockPlaces.js';
-import { geocodeCidade } from '../data/geocode.js';
+import { geocodeCidade, ufDoEstado } from '../data/geocode.js';
 import * as cnpjProvider from '../data/cnpjProvider.js';
 import { getStatus as getCnpjStatus } from '../data/cnpjDownload.js';
 import { createSearch, attachStream, prioritizeLead, getSearchLeads, updateLead, reopenSearch } from '../enrichment/enricher.js';
@@ -56,24 +56,41 @@ router.post('/api/search', async (req, res) => {
   const radius = clamp(radiusKm, 0.5, 30);
   const params = { niche: niche.trim(), city, lat: +lat, lng: +lng, radiusKm: radius };
 
+  let found = 0;
+  let leads = [];
+  let osmError = null; // guardado, não descartado — só é ignorado se o fallback CNPJ salvar a busca
+
   try {
-    let found, leads;
     if (USE_MOCK) {
       const todos = gerarEstabelecimentos(params);
       leads = todos.filter((p) => !p.hasWebsite);
       found = todos.length;
     } else {
-      // OpenStreetMap / Overpass — gratuito, filtra quem TEM a tag website
+      // OpenStreetMap / Overpass — gratuito, filtra quem TEM a tag website.
+      // Falha aqui NÃO aborta a rota: vira gatilho do fallback CNPJ (junto
+      // com found===0) e só vira erro pro usuário lá embaixo se o CNPJ
+      // também não resolver — nunca mascarada como "0 resultados" silencioso.
       ({ found, leads } = await buscarEstabelecimentos(params));
     }
+  } catch (e) {
+    console.warn('[search] Overpass falhou, tentando fallback CNPJ antes de desistir:', e.message);
+    osmError = e;
+  }
 
-    // Fallback CNPJ: só quando o OSM não achou nada e a UF foi resolvida no
-    // front (SearchBar → geocodeCidade). Se a UF não vier por qualquer
-    // motivo, degrada silenciosamente — nunca trava nem falha a busca por
-    // causa disso (ver plano, seção 5).
+  try {
+    // Fallback CNPJ: acionado quando o OSM não achou nada OU falhou de
+    // verdade, e a UF foi resolvida — pelo front (SearchBar → geocodeCidade)
+    // ou, na falta disso, a partir do nome do estado no fim de `city`
+    // ("Cidade, Estado") validado contra a lista fechada de UFs (ufDoEstado),
+    // não um regex solto que aceitaria qualquer 2 letras como sigla válida.
     let cnpjStatus, cnpjUf;
-    const ufNormalizada = typeof uf === 'string' ? uf.trim().toUpperCase() : '';
-    if (!USE_MOCK && found <= CNPJ_FALLBACK_THRESHOLD && /^[A-Z]{2}$/.test(ufNormalizada)) {
+    let ufNormalizada = typeof uf === 'string' ? uf.trim().toUpperCase() : '';
+    if (!/^[A-Z]{2}$/.test(ufNormalizada)) {
+      const estado = city.split(',').pop()?.trim();
+      ufNormalizada = (estado && ufDoEstado(estado)) || '';
+    }
+
+    if (!USE_MOCK && (found <= CNPJ_FALLBACK_THRESHOLD || osmError) && /^[A-Z]{2}$/.test(ufNormalizada)) {
       try {
         const cnpjResult = await cnpjProvider.buscarEstabelecimentos({ ...params, uf: ufNormalizada });
         cnpjStatus = cnpjResult.status;
@@ -84,9 +101,15 @@ router.post('/api/search', async (req, res) => {
           found += novos.length;
         }
       } catch (e) {
-        console.error('[cnpj] fallback falhou (seguindo só com OSM):', e.message);
+        console.error('[cnpj] fallback falhou (seguindo só com o que o OSM achou):', e.message);
       }
     }
+
+    // Se o OSM falhou de verdade E o CNPJ não trouxe nada pra compensar,
+    // propaga o erro real pro usuário — nunca devolve "0 resultados" de
+    // sucesso quando na verdade a busca não rodou (mesmo princípio do fix
+    // de partial/not_found no enriquecimento).
+    if (osmError && leads.length === 0) throw osmError;
 
     const searchId = createSearch(leads, { city, niche: params.niche, lat: params.lat, lng: params.lng, radiusKm: params.radiusKm, found });
     res.json({
