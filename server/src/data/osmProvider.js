@@ -31,23 +31,48 @@ function resolveTags(niche) {
   return [...tags];
 }
 
-function buildQuery({ tags, niche, lat, lng, radiusKm }) {
+// 'nw' (nodes+ways) em vez de 'nwr' (que também busca relations): validado
+// contra o Overpass real pra vários nichos (beleza, advocacia, construção
+// civil) e 0% dos elementos retornados eram relations — negócio pequeno
+// (o que esse produto busca) praticamente nunca é mapeado como relation no
+// OSM. Corta a resolução de multipolígonos do lado do servidor gratuito sem
+// perder cobertura observável.
+// Exportada pra ser testável sem bater no Overpass real (server/test/search.test.mjs).
+export function buildQuery({ tags, niche, lat, lng, radiusKm }) {
   const R = Math.round(radiusKm * 1000);
   const center = `${lat},${lng}`;
+  // Raios grandes retornam mais elementos e o Overpass leva mais tempo pra
+  // resolver — timeout e limite de saída sobem juntos pra não cortar
+  // resultado no meio nem estourar o timeout HTTP do overpassPost.
+  const timeoutSec = radiusKm > 15 ? 40 : 25;
+  const maxElements = radiusKm > 15 ? 200 : 150;
   let body;
   if (tags.length) {
     body = tags
       .map((t) => {
         const [k, v] = t.split('=');
-        return `nwr["${k}"="${v}"](around:${R},${center});`;
+        return `nw["${k}"="${v}"](around:${R},${center});`;
       })
       .join('');
   } else {
     // Nicho desconhecido -> busca por nome (mais ruidosa, mas funciona)
     const safe = niche.replace(/["\\]/g, ' ').trim();
-    body = `nwr["name"~"${safe}",i](around:${R},${center});`;
+    body = `nw["name"~"${safe}",i](around:${R},${center});`;
   }
-  return `[out:json][timeout:25];(${body});out center 150;`;
+  return `[out:json][timeout:${timeoutSec}];(${body});out center ${maxElements};`;
+}
+
+// Extraída como função pura (testável sem rede real) do parsing da resposta:
+// o Overpass às vezes responde 200 OK com um erro de runtime embutido no
+// JSON (timeout interno, query complexa demais) em vez de um HTTP de erro —
+// sem checar isso, um erro real vira silenciosamente "0 resultados" pro
+// usuário. Trata como falha de verdade pra não mascarar (mesma classe de bug
+// que já corrigimos no enriquecimento via DuckDuckGo/Bing).
+export function elementsOuErro(parsed) {
+  if (parsed.remark && /runtime error/i.test(parsed.remark)) {
+    throw new Error(`Overpass runtime error: ${parsed.remark}`);
+  }
+  return parsed.elements ?? [];
 }
 
 // node:https com `agent: false` (socket novo a cada chamada) + `family: 4`.
@@ -81,7 +106,7 @@ function overpassPost(url, query, timeoutMs) {
         res.on('data', (c) => (data += c));
         res.on('end', () => {
           try {
-            resolve(JSON.parse(data).elements ?? []);
+            resolve(elementsOuErro(JSON.parse(data)));
           } catch (e) {
             reject(e);
           }
@@ -96,14 +121,18 @@ function overpassPost(url, query, timeoutMs) {
   });
 }
 
-async function fetchOverpass(query) {
+async function fetchOverpass(query, radiusKm = 5) {
+  // Timeout HTTP do socket >= o timeout que pedimos ao Overpass no próprio
+  // corpo da query (buildQuery), senão o Node derruba a conexão antes do
+  // Overpass conseguir responder num raio grande.
+  const timeoutMs = radiusKm > 15 ? 40000 : 25000;
   // Cada endpoint ganha retry com backoff (transient errors: rede, 429, 5xx).
   // Falha em todos os endpoints -> RetryError amigável para o front.
   let lastErr;
   for (const url of ENDPOINTS) {
     try {
       return await withRetry(
-        (attempt) => overpassPost(url, query, 25000),
+        (attempt) => overpassPost(url, query, timeoutMs),
         {
           label: 'Overpass',
           retries: 2,
@@ -174,7 +203,7 @@ export async function buscarEstabelecimentos({ niche, city, lat, lng, radiusKm }
 
   const tags = resolveTags(niche);
   const query = buildQuery({ tags, niche, lat, lng, radiusKm });
-  const elements = await fetchOverpass(query);
+  const elements = await fetchOverpass(query, radiusKm);
 
   const seen = new Set();
   const all = [];
