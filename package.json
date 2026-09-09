@@ -5,6 +5,7 @@
   "description": "Sobe API + front juntos. O worker Python é chamado pela API sob demanda (não é um processo contínuo).",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "test": "npm --prefix server test",
     "dev": "concurrently -k -n api,web -c blue,green \"npm --prefix server run dev\" \"npm --prefix web run dev\"",
     "dev:mock": "concurrently -k -n api,web -c blue,green \"cross-env DATA_PROVIDER=mock ENRICH_PROVIDER=mock npm --prefix server run dev\" \"npm --prefix web run dev\"",
     "desktop": "npm --prefix web run build && npm --prefix desktop start -- --dev"
