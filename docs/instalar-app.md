@@ -48,7 +48,7 @@ Na página **[github.com/d1g4odev/caca-cliente/releases/latest](https://github.c
    - Isso só precisa ser feito **na primeira vez**. Nas próximas, é só clicar duas vezes normal.
 5. Se mesmo assim aparecer **"O app está danificado"**, abra o **Terminal** (Finder → Aplicativos → Utilitários → Terminal) e cole:
    ```bash
-   xattr -cr /Applications/Caça-Cliente.app
+   xattr -cr /Applications/caca-cliente.app
    ```
    Depois tente abrir de novo. Esse comando só remove um aviso de quarentena — não modifica o app.
 
